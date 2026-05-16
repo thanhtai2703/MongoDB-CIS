@@ -10,7 +10,6 @@ ansible.log
 reports/
 
 # Local generated inventory and SSH material
-inventory.yaml
 gcp-key.pem
 *.pem
 *.key
