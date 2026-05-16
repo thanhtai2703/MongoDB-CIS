@@ -3,22 +3,40 @@
   hosts: database_nodes
   become: yes
   tasks:
-    - name: "Add MongoDB 6.0 GPG key"
-      shell: |
-        curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | gpg --yes --dearmor -o /usr/share/keyrings/mongodb.gpg
-      args:
-        creates: /usr/share/keyrings/mongodb.gpg
+    - name: "Install packages required for MongoDB repository setup"
+      apt:
+        name:
+          - gnupg
+          - curl
+        state: present
+        update_cache: yes
 
-    - name: "Add MongoDB 6.0 apt repository"
+    - name: "Remove old MongoDB 6.0 repository if present"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/mongodb-org-6.0.list
+        - /usr/share/keyrings/mongodb.gpg
+
+    - name: "Add MongoDB 8.0 GPG key"
       shell: |
-        curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb.gpg --overwrite
-        echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+        curl -fsSL https://pgp.mongodb.com/server-8.0.asc | gpg --yes --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+      args:
+        creates: /usr/share/keyrings/mongodb-server-8.0.gpg
+
+    - name: "Add MongoDB 8.0 apt repository"
+      apt_repository:
+        repo: "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse"
+        filename: mongodb-org-8.0
+        state: present
+        update_cache: yes
 
     - name: "Install MongoDB packages"
       apt:
         name:
           - mongodb-org
-          - mongodb-database-tools
+        state: latest
         update_cache: yes
 
     - name: "Ensure MongoDB data and log directories exist"

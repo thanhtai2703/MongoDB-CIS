@@ -22,4 +22,4 @@ all:
   vars:
     ansible_user: ${ssh_user}
     ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-    mongodb_version: "6.0"
+    mongodb_version: "8.0"
