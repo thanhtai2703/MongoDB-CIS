@@ -1,0 +1,292 @@
+---
+- name: "Seed CIS demo data vào MongoDB Replica Set"
+  hosts: db-node-1
+  become: yes
+  gather_facts: no
+
+  vars:
+    db: "demo"
+    mongo_host: "{{ hostvars['db-node-1'].ansible_host }}"
+    js_dir: "/tmp/mongo_seed"
+    # w=1: chỉ chờ ack từ primary, không chờ majority.
+    # → write majority sẽ timeout. Seed data không cần durability mạnh.
+    mongo_uri: "mongodb://{{ hostvars['db-node-1'].ansible_host }}:27017/?directConnection=true&w=1"
+
+  tasks:
+    - name: "Tạo thư mục chứa JS seed files"
+      file:
+        path: "{{ js_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "Đợi primary sẵn sàng"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        --eval "db.hello().isWritablePrimary"
+        | tail -n1
+      register: primary_check
+      until: primary_check.stdout | trim == 'true'
+      retries: 12
+      delay: 5
+      changed_when: false
+
+    # ---------- 1. ROLES & USERS ----------
+    - name: "Ghi JS: tạo role và user"
+      copy:
+        dest: "{{ js_dir }}/01_users_roles.js"
+        content: |
+          const adb = db.getSiblingDB("admin");
+
+          // Xoa role cu neu ton tai
+          ["demoReader","demoWriter","demoAdmin"].forEach(function(r) {
+            try { adb.dropRole(r); } catch(e) {}
+          });
+
+          adb.runCommand({
+            createRole: "demoReader",
+            privileges: [
+              { resource: { db: "demo", collection: "messages" }, actions: ["find"] },
+              { resource: { db: "demo", collection: "users" },    actions: ["find"] }
+            ],
+            roles: []
+          });
+
+          adb.runCommand({
+            createRole: "demoWriter",
+            privileges: [
+              { resource: { db: "demo", collection: "messages" },  actions: ["find","insert","update","remove"] },
+              { resource: { db: "demo", collection: "orders" },    actions: ["find","insert","update"] },
+              { resource: { db: "demo", collection: "users" },     actions: ["find"] },
+              { resource: { db: "demo", collection: "audit_log" }, actions: ["insert"] }
+            ],
+            roles: []
+          });
+
+          adb.runCommand({
+            createRole: "demoAdmin",
+            privileges: [
+              { resource: { db: "demo", collection: "" }, actions: ["find","insert","update","remove","createIndex","dropCollection"] },
+              { resource: { db: "local", collection: "oplog.rs" }, actions: ["find"] }
+            ],
+            roles: [ { role: "userAdmin", db: "demo" } ]
+          });
+
+          ["app_reader","app_writer","app_admin"].forEach(function(u) {
+            try { adb.dropUser(u); } catch(e) {}
+          });
+
+          adb.createUser({ user: "app_reader", pwd: "ReaderPass123!", roles: [{ role: "demoReader", db: "admin" }] });
+          adb.createUser({ user: "app_writer", pwd: "WriterPass123!", roles: [{ role: "demoWriter", db: "admin" }] });
+          adb.createUser({ user: "app_admin",  pwd: "AdminPass123!",  roles: [{ role: "demoAdmin",  db: "admin" }] });
+
+          print("roles and users created");
+
+    - name: "Chạy JS: tạo role và user"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/01_users_roles.js"
+      register: result
+      changed_when: true
+      failed_when: result.rc != 0
+
+    # ---------- 2. COLLECTION users ----------
+    - name: "Ghi JS: seed users"
+      copy:
+        dest: "{{ js_dir }}/02_users.js"
+        content: |
+          const d = db.getSiblingDB("demo");
+          d.users.drop();
+          d.users.insertMany([
+            {
+              username: "alice",
+              password_hash: "bcrypt_hash_alice_placeholder",
+              email: "alice@example.com",
+              role: "app_writer",
+              created_at: new Date("2026-04-01T08:00:00Z")
+            },
+            {
+              username: "bob",
+              password_hash: "bcrypt_hash_bob_placeholder",
+              email: "bob@example.com",
+              role: "app_reader",
+              created_at: new Date("2026-04-05T10:30:00Z")
+            },
+            {
+              username: "admin",
+              password_hash: "bcrypt_hash_admin_placeholder",
+              email: "admin@example.com",
+              role: "app_admin",
+              created_at: new Date("2026-03-20T07:00:00Z")
+            },
+            {
+              username: "legacy_user",
+              password_plain: "qwerty123",
+              email: "legacy@example.com",
+              role: "app_reader",
+              created_at: new Date("2026-01-15T14:00:00Z")
+            },
+            {
+              username: "carol",
+              password_hash: "bcrypt_hash_carol_placeholder",
+              email: "carol@example.com",
+              role: "app_writer",
+              created_at: new Date("2026-04-12T09:20:00Z")
+            },
+            {
+              username: "dave",
+              password_hash: "bcrypt_hash_dave_placeholder",
+              email: "dave@example.com",
+              role: "app_reader",
+              created_at: new Date("2026-04-18T15:00:00Z")
+            }
+          ]);
+          d.users.createIndex({ username: 1 }, { unique: true });
+          print("users count = " + d.users.countDocuments());
+
+    - name: "Chạy JS: seed users"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/02_users.js"
+      register: result
+      changed_when: true
+      failed_when: result.rc != 0
+
+    # ---------- 3. COLLECTION messages ----------
+    - name: "Ghi JS: seed messages"
+      copy:
+        dest: "{{ js_dir }}/03_messages.js"
+        content: |
+          const d = db.getSiblingDB("demo");
+          d.messages.drop();
+          d.messages.insertMany([
+            { author: "alice", content: "Xin chao he thong",          visibility: "public",  created_at: new Date("2026-05-01T09:00:00Z") },
+            { author: "bob",   content: "Test replica set",           visibility: "public",  created_at: new Date("2026-05-02T10:15:00Z") },
+            { author: "alice", content: "Note noi bo - khong public", visibility: "private", created_at: new Date("2026-05-03T11:30:00Z") },
+            { author: "admin", content: "Maintenance window 02:00",   visibility: "public",  created_at: new Date("2026-05-04T07:45:00Z") },
+            { author: "carol", content: "Demo CIS Benchmark Level 1", visibility: "public",  created_at: new Date("2026-05-06T13:00:00Z") },
+            { author: "dave",  content: "Failover test passed",       visibility: "public",  created_at: new Date("2026-05-07T16:20:00Z") },
+            { author: "admin", content: "TODO: bat authorization",    visibility: "private", created_at: new Date("2026-05-08T08:30:00Z") }
+          ]);
+          d.messages.createIndex({ created_at: -1 });
+          print("messages count = " + d.messages.countDocuments());
+
+    - name: "Chạy JS: seed messages"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/03_messages.js"
+      register: result
+      changed_when: true
+      failed_when: result.rc != 0
+
+    # ---------- 4. COLLECTION orders ----------
+    - name: "Ghi JS: seed orders"
+      copy:
+        dest: "{{ js_dir }}/04_orders.js"
+        content: |
+          const d = db.getSiblingDB("demo");
+          d.orders.drop();
+          d.orders.insertMany([
+            {
+              user: "alice",
+              items: [ { sku: "BOOK-01", qty: 2, price: 150000 }, { sku: "PEN-09", qty: 5, price: 12000 } ],
+              total: 360000,
+              card_last4: "4242",
+              status: "paid",
+              created_at: new Date("2026-04-20T13:00:00Z")
+            },
+            {
+              user: "bob",
+              items: [ { sku: "MUG-03", qty: 1, price: 95000 } ],
+              total: 95000,
+              card_last4: "1881",
+              status: "paid",
+              created_at: new Date("2026-04-25T16:20:00Z")
+            },
+            {
+              user: "alice",
+              items: [ { sku: "BAG-07", qty: 1, price: 450000 } ],
+              total: 450000,
+              card_full: "4242424242424242",
+              status: "pending",
+              created_at: new Date("2026-05-05T09:10:00Z")
+            }
+          ]);
+          d.orders.createIndex({ user: 1, created_at: -1 });
+          print("orders count = " + d.orders.countDocuments());
+
+    - name: "Chạy JS: seed orders"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/04_orders.js"
+      register: result
+      changed_when: true
+      failed_when: result.rc != 0
+
+    # ---------- 5. COLLECTION audit_log ----------
+    - name: "Ghi JS: seed audit_log"
+      copy:
+        dest: "{{ js_dir }}/05_audit_log.js"
+        content: |
+          const d = db.getSiblingDB("demo");
+          d.audit_log.drop();
+          d.audit_log.insertMany([
+            { user: "alice", action: "LOGIN_SUCCESS", target: "session",            ip: "203.0.113.5",  ts: new Date("2026-05-01T08:59:00Z") },
+            { user: "bob",   action: "LOGIN_SUCCESS", target: "session",            ip: "198.51.100.7", ts: new Date("2026-05-02T10:14:00Z") },
+            { user: "?",     action: "LOGIN_FAIL",    target: "session",            ip: "192.0.2.123",  ts: new Date("2026-05-02T11:22:00Z"), reason: "bad_password" },
+            { user: "admin", action: "USER_CREATE",   target: "users/legacy_user",  ip: "10.148.0.6",   ts: new Date("2026-01-15T14:00:00Z") },
+            { user: "alice", action: "ORDER_CREATE",  target: "orders",             ip: "203.0.113.5",  ts: new Date("2026-05-05T09:10:00Z") },
+            { user: "?",     action: "LOGIN_FAIL",    target: "session",            ip: "45.155.205.12", ts: new Date("2026-05-06T02:45:00Z"), reason: "user_not_found" },
+            { user: "carol", action: "LOGIN_SUCCESS", target: "session",            ip: "203.0.113.9",  ts: new Date("2026-05-06T12:55:00Z") },
+            { user: "dave",  action: "MESSAGE_CREATE", target: "messages",          ip: "203.0.113.20", ts: new Date("2026-05-07T16:20:00Z") },
+            { user: "admin", action: "ROLE_GRANT",    target: "users/carol",        ip: "10.148.0.6",   ts: new Date("2026-04-12T09:21:00Z") }
+          ]);
+          d.audit_log.createIndex({ ts: -1 });
+          d.audit_log.createIndex({ user: 1, ts: -1 });
+          print("audit_log count = " + d.audit_log.countDocuments());
+
+    - name: "Chạy JS: seed audit_log"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/05_audit_log.js"
+      register: result
+      changed_when: true
+      failed_when: result.rc != 0
+
+    # ---------- 6. TỔNG KẾT ----------
+    - name: "Ghi JS: tổng kết"
+      copy:
+        dest: "{{ js_dir }}/06_summary.js"
+        content: |
+          const d = db.getSiblingDB("demo");
+          const adb = db.getSiblingDB("admin");
+          print("=== Collections ===");
+          d.getCollectionNames().forEach(function(c) {
+            print(c + ": " + d[c].countDocuments() + " docs");
+          });
+          print("=== Mongo Users ===");
+          adb.getUsers().users.forEach(function(u) {
+            print(u.user + " -> " + u.roles.map(function(r){ return r.role; }).join(","));
+          });
+
+    - name: "Chạy JS: tổng kết"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_uri }}"
+        "{{ js_dir }}/06_summary.js"
+      register: summary
+      changed_when: false
+
+    - name: "Hiển thị kết quả"
+      debug:
+        var: summary.stdout_lines
+
+    - name: "Dọn dẹp JS files tạm"
+      file:
+        path: "{{ js_dir }}"
+        state: absent

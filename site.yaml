@@ -1,0 +1,4 @@
+---
+- import_playbook: setup_mongodb.yaml
+- import_playbook: web.yaml
+- import_playbook: verify_system.yaml

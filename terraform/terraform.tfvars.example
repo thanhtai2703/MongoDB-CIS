@@ -1,0 +1,16 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is ignored by git.
+
+project_id = "REPLACE_ME"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Control node zone. Defaults to us-central1-a if omitted.
+control_zone = "us-central1-a"
+
+# SSH keys injected into VM metadata and copied to the control node for the lab.
+ssh_public_key_path  = "../gcp-key.pub"
+ssh_private_key_path = "../gcp-key.pem"
+
+# Restrict this to your public IP /32 for a safer demo.
+control_ssh_source_ranges = ["0.0.0.0/0"]

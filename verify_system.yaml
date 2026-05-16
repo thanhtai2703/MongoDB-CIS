@@ -1,0 +1,41 @@
+---
+- name: "Verify MongoDB and Web"
+  hosts: all
+  become: yes
+  tasks:
+    - name: "MongoDB | Check replica set status"
+      shell: mongosh --quiet --eval "rs.status().ok"
+      register: mongo_rs_ok
+      when: inventory_hostname == 'db-node-1'
+      changed_when: false
+
+    - name: "MongoDB | Assert replica set is healthy"
+      assert:
+        that: "mongo_rs_ok.stdout | trim == '1'"
+        fail_msg: "Replica Set is not initialized or not healthy."
+      when: inventory_hostname == 'db-node-1'
+
+    - name: "MongoDB | Count normal data-bearing voting members"
+      shell: |
+        mongosh --quiet --eval "rs.conf().members.filter(m => !m.arbiterOnly && !m.hidden && m.votes === 1).length"
+      register: mongo_data_members
+      when: inventory_hostname == 'db-node-1'
+      changed_when: false
+
+    - name: "MongoDB | Assert three normal data nodes"
+      assert:
+        that: "mongo_data_members.stdout | trim | int == 3"
+        fail_msg: "Replica Set does not have exactly three normal data-bearing voting members."
+      when: inventory_hostname == 'db-node-1'
+
+    - name: "Web | Gather service facts"
+      service_facts:
+      when: "'web_servers' in group_names"
+
+    - name: "Web | Assert Nginx and PHP-FPM are running"
+      assert:
+        that:
+          - ansible_facts.services['nginx.service'].state == 'running'
+          - ansible_facts.services['php8.1-fpm.service'].state == 'running'
+        fail_msg: "Nginx or PHP-FPM is not running on the web server."
+      when: "'web_servers' in group_names"

@@ -1,0 +1,8 @@
+---
+# Biến ứng dụng dùng chung cho toàn bộ host.
+# KHÔNG đặt SSH config ở đây — SSH config thuộc về ansible.cfg và inventory.
+
+# MongoDB
+mongodb_version: "6.0"
+mongo_version: "6.0"
+replica_set_name: "rs0"

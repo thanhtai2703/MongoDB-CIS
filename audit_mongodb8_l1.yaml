@@ -1,0 +1,71 @@
+---
+- name: "Audit CIS MongoDB 8 Benchmark Level 1"
+  hosts: database_nodes
+  become: yes
+  gather_facts: yes
+  vars:
+    audit_phase: "before"
+    audit_remote_dir: "/tmp/cis_mongodb8_l1"
+    audit_local_dir: "reports/{{ audit_phase }}"
+    mongo_audit_user: ""
+    mongo_audit_pass: ""
+    mongo_audit_auth_db: "admin"
+
+  tasks:
+    - name: "Create local report directory"
+      file:
+        path: "{{ audit_local_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: no
+      run_once: yes
+
+    - name: "Create remote audit directory"
+      file:
+        path: "{{ audit_remote_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Copy CIS MongoDB 8 Level 1 audit runner"
+      copy:
+        src: audit/cis_mongodb8_l1_audit.py
+        dest: "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Run CIS MongoDB 8 Level 1 audit"
+      command:
+        argv:
+          - python3
+          - "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+          - "--output"
+          - "{{ audit_remote_dir }}/{{ inventory_hostname }}.json"
+          - "--markdown"
+          - "{{ audit_remote_dir }}/{{ inventory_hostname }}.md"
+      environment:
+        MONGO_AUDIT_USER: "{{ mongo_audit_user }}"
+        MONGO_AUDIT_PASS: "{{ mongo_audit_pass }}"
+        MONGO_AUDIT_AUTH_DB: "{{ mongo_audit_auth_db }}"
+      register: cis_audit
+      changed_when: false
+      failed_when: false
+
+    - name: "Show audit summary"
+      debug:
+        msg: "{{ inventory_hostname }} audit completed with rc={{ cis_audit.rc }}"
+
+    - name: "Fetch JSON report"
+      fetch:
+        src: "{{ audit_remote_dir }}/{{ inventory_hostname }}.json"
+        dest: "{{ audit_local_dir }}/{{ inventory_hostname }}.json"
+        flat: yes
+
+    - name: "Fetch Markdown report"
+      fetch:
+        src: "{{ audit_remote_dir }}/{{ inventory_hostname }}.md"
+        dest: "{{ audit_local_dir }}/{{ inventory_hostname }}.md"
+        flat: yes

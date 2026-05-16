@@ -1,0 +1,99 @@
+---
+- name: "Install MongoDB Replica Set"
+  hosts: database_nodes
+  become: yes
+  tasks:
+    - name: "Add MongoDB 6.0 GPG key"
+      shell: |
+        curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | gpg --yes --dearmor -o /usr/share/keyrings/mongodb.gpg
+      args:
+        creates: /usr/share/keyrings/mongodb.gpg
+
+    - name: "Add MongoDB 6.0 apt repository"
+      shell: |
+        curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb.gpg --overwrite
+        echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+
+    - name: "Install MongoDB packages"
+      apt:
+        name:
+          - mongodb-org
+          - mongodb-database-tools
+        update_cache: yes
+
+    - name: "Ensure MongoDB data and log directories exist"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: "0755"
+      loop:
+        - /var/lib/mongodb
+        - /var/log/mongodb
+
+    - name: "Render MongoDB config"
+      template:
+        src: templates/mongod.conf.j2
+        dest: /etc/mongod.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart MongoDB
+
+    - name: "Ensure MongoDB service is enabled and running"
+      service:
+        name: mongod
+        state: started
+        enabled: yes
+
+    - name: "Apply MongoDB config restart before replica set operations"
+      meta: flush_handlers
+
+    - name: "Wait for MongoDB port"
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 27017
+        timeout: 60
+
+    - name: "Initialize or update Replica Set with 3 normal data nodes"
+      shell: |
+        mongosh --quiet <<'MONGO'
+        const desired = {
+          _id: "{{ replica_set_name }}",
+          members: [
+            { _id: 0, host: "{{ hostvars["db-node-1"].ansible_host }}:27017", priority: 2 },
+            { _id: 1, host: "{{ hostvars["db-node-2"].ansible_host }}:27017", priority: 1 },
+            { _id: 2, host: "{{ hostvars["db-node-3"].ansible_host }}:27017", priority: 1 }
+          ]
+        };
+
+        try {
+          rs.status();
+          const current = rs.conf();
+          const normalize = members => members.map(m => ({
+            _id: m._id,
+            host: m.host,
+            priority: m.priority,
+            votes: m.votes === undefined ? 1 : m.votes,
+            hidden: m.hidden === undefined ? false : m.hidden,
+            arbiterOnly: m.arbiterOnly === undefined ? false : m.arbiterOnly
+          }));
+          if (JSON.stringify(normalize(current.members)) === JSON.stringify(normalize(desired.members))) {
+            print("replica set already configured");
+          } else {
+            current.members = desired.members;
+            current.version = (current.version || 1) + 1;
+            printjson(rs.reconfig(current, { force: true }));
+          }
+        } catch (e) {
+          printjson(rs.initiate(desired));
+        }
+        MONGO
+      when: inventory_hostname == 'db-node-1'
+
+  handlers:
+    - name: Restart MongoDB
+      service:
+        name: mongod
+        state: restarted

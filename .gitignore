@@ -1,0 +1,35 @@
+.codex_tmp/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Ansible
+ansible.log
+*.retry
+reports/
+
+# Local generated inventory and SSH material
+inventory.yaml
+gcp-key.pem
+*.pem
+*.key
+
+# Local env files
+.env
+.env.*
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfvars
+terraform/*.tfvars
+terraform/*.tfvars.json
+terraform/terraform.tfstate
+terraform/terraform.tfstate.*
+terraform/crash.log
+terraform/crash.*.log
+terraform/*.tfplan
+terraform/override.tf
+terraform/override.tf.json
+terraform/*_override.tf
+terraform/*_override.tf.json

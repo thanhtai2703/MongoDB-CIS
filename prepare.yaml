@@ -1,0 +1,17 @@
+---
+- name: "Bootstrap: Chuẩn bị môi trường nền tảng cho máy trống"
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: "1. Cài đặt Python3 bằng module raw (Không cần Python trước đó)"
+      raw: apt-get update && apt-get install -y python3
+      changed_when: false
+
+    - name: "2. Cài đặt các thư viện bổ trợ"
+      apt:
+        name:
+          - python3-pip
+          - acl
+        state: present
