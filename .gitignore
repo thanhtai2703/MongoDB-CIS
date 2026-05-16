@@ -9,11 +9,6 @@ ansible.log
 *.retry
 reports/
 
-# Local generated inventory and SSH material
-gcp-key.pem
-*.pem
-*.key
-
 # Local env files
 .env
 .env.*
