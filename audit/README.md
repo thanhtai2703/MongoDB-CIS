@@ -49,6 +49,14 @@ File permission remediation for `7.1` and `7.2`:
 ansible-playbook playbooks/remediation/remediate_file_permissions.yaml
 ```
 
+Authorization role remediation for `3.1` and `3.4`:
+
+```bash
+ansible-playbook playbooks/remediation/remediate_authorization_roles.yaml \
+  -e mongo_admin_pass='AdminPass123!' \
+  -e mongo_audit_pass='AuditPass123!'
+```
+
 TLS remediation for `4.2` and `4.3`:
 
 ```bash
@@ -60,8 +68,9 @@ If MongoDB authentication is already enabled, pass an audit account:
 ```bash
 ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
   -e audit_phase=after \
-  -e mongo_audit_user=MongoAudit \
-  -e mongo_audit_pass='AuditPass123!'
+  -e mongo_audit_user=MongoAdmin \
+  -e mongo_audit_pass='AdminPass123!' \
+  -e mongo_audit_allowed_admin_users=MongoAdmin
 ```
 
 If TLS has also been enabled, pass TLS audit options:
@@ -69,8 +78,9 @@ If TLS has also been enabled, pass TLS audit options:
 ```bash
 ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
   -e audit_phase=after \
-  -e mongo_audit_user=MongoAudit \
-  -e mongo_audit_pass='AuditPass123!' \
+  -e mongo_audit_user=MongoAdmin \
+  -e mongo_audit_pass='AdminPass123!' \
+  -e mongo_audit_allowed_admin_users=MongoAdmin \
   -e mongo_audit_tls=true
 ```
 
