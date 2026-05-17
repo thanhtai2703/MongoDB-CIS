@@ -5,16 +5,8 @@
     app_root: "/var/www/html"
     mongodb_db: "demo"
     mongodb_collection: "messages"
-    # Credential PHP dùng để connect Replica Set.
-    # Để rỗng khi authorization chưa được bật (demo "before audit").
-    # Sau khi remediate (bật security.authorization), set 2 biến này
-    # (vd: -e mongodb_app_user=app_writer mongodb_app_pass=WriterPass123!)
-    # rồi chạy lại web.yaml để cập nhật template.
     mongodb_app_user: ""
     mongodb_app_pass: ""
-    mongodb_app_tls: false
-    mongodb_tls_local_ca_file: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}/mongoCA.crt"
-    mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
 
   tasks:
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
@@ -22,9 +14,7 @@
         name:
           - nginx
           - "php{{ php_version }}-fpm"
-          - "php{{ php_version }}-dev"
-          - php-pear
-          - build-essential
+          - "php{{ php_version }}-mongodb"
           - libcurl4-openssl-dev
           - pkg-config
           - libssl-dev
@@ -32,23 +22,14 @@
         update_cache: yes
 
     - name: "2. Kiểm tra xem PHP engine đã nạp module mongodb chưa"
-      # Thay đổi từ 'pecl list' sang 'php -m' để kiểm tra thực tế runtime
       shell: "php -m | grep mongodb"
       register: mongodb_php_check
       failed_when: false
       changed_when: false
 
-    - name: "3. Biên dịch và cài đặt MongoDB Driver nếu chưa có"
-      shell: |
-        printf "\n" | pecl install mongodb
-      # Chỉ chạy khi module chưa xuất hiện trong 'php -m'
-      when: mongodb_php_check.rc != 0
-      notify: "Restart PHP-FPM"
-
-    - name: "4. Cấu hình file ini để PHP nhận diện module mongodb"
+    - name: "3. Cấu hình file ini để PHP nhận diện module mongodb"
       copy:
         dest: "/etc/php/{{ php_version }}/{{ item }}/conf.d/20-mongodb.ini"
-        # Đảm bảo nội dung chính xác để PHP nạp extension
         content: "extension=mongodb.so"
         owner: root
         group: root
@@ -58,13 +39,13 @@
         - cli
       notify: "Restart PHP-FPM"
 
-    - name: "5. Đảm bảo Nginx đã được bật và khởi chạy cùng hệ thống"
+    - name: "4. Đảm bảo Nginx đã được bật và khởi chạy cùng hệ thống"
       service:
         name: nginx
         state: started
         enabled: yes
 
-    - name: "6. Mở Port 80 và 443 trên tường lửa"
+    - name: "5. Mở Port 80 và 443 trên tường lửa"
       community.general.ufw:
         rule: allow
         port: "{{ item }}"
@@ -73,31 +54,13 @@
         - "80"
         - "443"
 
-    - name: "Create MongoDB TLS directory for web client"
-      file:
-        path: "{{ mongodb_tls_ca_file | dirname }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-      when: mongodb_app_tls | bool
-
-    - name: "Install MongoDB CA certificate for web client"
-      copy:
-        src: "{{ mongodb_tls_local_ca_file }}"
-        dest: "{{ mongodb_tls_ca_file }}"
-        owner: root
-        group: root
-        mode: "0644"
-      when: mongodb_app_tls | bool
-
-    - name: "7. Ghi đè cấu hình Default để hỗ trợ PHP"
+    - name: "6. Ghi đè cấu hình Default để hỗ trợ PHP"
       template:
         src: ../../templates/nginx_default.j2
         dest: /etc/nginx/sites-available/default
       notify: "Restart Nginx"
 
-    - name: "8. Triển khai mã nguồn PHP trực tiếp vào thư mục html"
+    - name: "7. Triển khai mã nguồn PHP trực tiếp vào thư mục html"
       template:
         src: ../../templates/index.php.j2
         dest: "{{ app_root }}/index.php"
@@ -105,22 +68,21 @@
         group: www-data
         mode: "0644"
 
-    - name: "9. Xóa file index.html mặc định của Nginx"
+    - name: "8. Xóa file index.html mặc định của Nginx"
       file:
         path: "{{ app_root }}/index.html"
         state: absent
 
-    - name: "10. Ép khởi động lại PHP-FPM để nạp Driver mới"
-      # Đảm bảo PHP-FPM nhận cấu hình mới ngay lập tức
+    - name: "9. Đảm bảo PHP-FPM đã được bật và khởi chạy cùng hệ thống"
       service:
         name: "php{{ php_version }}-fpm"
-        state: restarted
+        state: started
         enabled: yes
 
-    - name: "5. Đảm bảo Nginx và PHP-FPM luôn chạy với cấu hình mới"
+    - name: "10. Restart Nginx và PHP-FPM để nạp cấu hình mới"
       service:
         name: "{{ item }}"
-        state: restarted # Ép restart thay vì chỉ started để nạp Driver MongoDB
+        state: restarted
         enabled: yes
       loop:
         - "php{{ php_version }}-fpm"
