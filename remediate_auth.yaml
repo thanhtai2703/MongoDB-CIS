@@ -1,0 +1,120 @@
+---
+- name: "Prepare MongoDB authentication remediation"
+  hosts: database_nodes
+  become: yes
+  gather_facts: no
+  vars:
+    mongodb_keyfile_path: "/etc/mongodb-keyfile"
+    mongodb_keyfile_local_path: "/tmp/automation_cis_mongodb_keyfile"
+
+  tasks:
+    - name: "Generate shared replica set keyfile content on control node"
+      set_fact:
+        mongodb_keyfile_content: "{{ lookup('password', mongodb_keyfile_local_path ~ ' chars=ascii_letters,digits length=756') }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
+
+    - name: "Install shared replica set keyfile"
+      copy:
+        content: "{{ hostvars[groups['database_nodes'][0]].mongodb_keyfile_content }}"
+        dest: "{{ mongodb_keyfile_path }}"
+        owner: mongodb
+        group: mongodb
+        mode: "0400"
+
+
+- name: "Create MongoDB admin and audit users before enabling authorization"
+  hosts: db-node-1
+  become: yes
+  gather_facts: no
+  vars:
+    mongo_admin_user: "MongoAdmin"
+    mongo_admin_pass: "AdminPass123!"
+    mongo_audit_user: "MongoAudit"
+    mongo_audit_pass: "AuditPass123!"
+    mongo_auth_db: "admin"
+    mongo_seed_uri: "mongodb://{{ hostvars['db-node-1'].ansible_host }}:27017/?directConnection=true&w=majority"
+
+  tasks:
+    - name: "Wait for MongoDB primary to accept connections"
+      shell: >
+        mongosh --quiet
+        "{{ mongo_seed_uri }}"
+        --eval "db.hello().isWritablePrimary"
+        | tail -n1
+      register: primary_check
+      until: primary_check.stdout | trim == 'true'
+      retries: 12
+      delay: 5
+      changed_when: false
+
+    - name: "Create or update admin and audit users"
+      shell: |
+        mongosh --quiet "{{ mongo_seed_uri }}" <<'MONGO'
+        const adb = db.getSiblingDB("{{ mongo_auth_db }}");
+
+        function upsertUser(username, password, roles) {
+          if (adb.getUser(username)) {
+            adb.updateUser(username, { pwd: password, roles: roles });
+            print("updated user: " + username);
+          } else {
+            adb.createUser({ user: username, pwd: password, roles: roles });
+            print("created user: " + username);
+          }
+        }
+
+        upsertUser(
+          "{{ mongo_admin_user }}",
+          "{{ mongo_admin_pass }}",
+          [
+            { role: "root", db: "admin" }
+          ]
+        );
+
+        upsertUser(
+          "{{ mongo_audit_user }}",
+          "{{ mongo_audit_pass }}",
+          [
+            { role: "clusterMonitor", db: "admin" },
+            { role: "userAdminAnyDatabase", db: "admin" },
+            { role: "readAnyDatabase", db: "admin" }
+          ]
+        );
+        MONGO
+      register: user_create
+      changed_when: "'created user:' in user_create.stdout or 'updated user:' in user_create.stdout"
+      no_log: true
+
+
+- name: "Enable MongoDB authentication and localhost bypass protection"
+  hosts: database_nodes
+  become: yes
+  gather_facts: no
+  vars:
+    mongodb_keyfile_path: "/etc/mongodb-keyfile"
+
+  tasks:
+    - name: "Render MongoDB auth-enabled config"
+      template:
+        src: templates/mongod_auth.conf.j2
+        dest: /etc/mongod.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart MongoDB
+
+    - name: "Apply MongoDB auth config restart"
+      meta: flush_handlers
+
+    - name: "Wait for MongoDB port after auth remediation"
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 27017
+        timeout: 60
+
+  handlers:
+    - name: Restart MongoDB
+      service:
+        name: mongod
+        state: restarted

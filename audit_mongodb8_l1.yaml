@@ -10,6 +10,15 @@
     mongo_audit_user: ""
     mongo_audit_pass: ""
     mongo_audit_auth_db: "admin"
+    audit_package_files:
+      - run_mongodb8_l1_audit.py
+      - audit_software.py
+      - audit_authentication.py
+      - audit_authorization.py
+      - audit_data_encryption.py
+      - audit_system_activity.py
+      - audit_network_configuration.py
+      - audit_file_permissions.py
 
   tasks:
     - name: "Create local report directory"
@@ -29,23 +38,26 @@
         group: root
         mode: "0755"
 
-    - name: "Copy CIS MongoDB 8 Level 1 audit runner"
+    - name: "Copy CIS MongoDB 8 Level 1 audit package"
       copy:
-        src: audit/cis_mongodb8_l1_audit.py
-        dest: "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+        src: "audit/{{ item }}"
+        dest: "{{ audit_remote_dir }}/{{ item }}"
         owner: root
         group: root
         mode: "0755"
+      loop: "{{ audit_package_files }}"
 
     - name: "Run CIS MongoDB 8 Level 1 audit"
       command:
         argv:
           - python3
-          - "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+          - "{{ audit_remote_dir }}/run_mongodb8_l1_audit.py"
           - "--output"
           - "{{ audit_remote_dir }}/{{ inventory_hostname }}.json"
           - "--markdown"
           - "{{ audit_remote_dir }}/{{ inventory_hostname }}.md"
+          - "--sections-dir"
+          - "{{ audit_remote_dir }}/sections"
       environment:
         MONGO_AUDIT_USER: "{{ mongo_audit_user }}"
         MONGO_AUDIT_PASS: "{{ mongo_audit_pass }}"
