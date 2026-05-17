@@ -217,22 +217,8 @@ def mongosh_eval(script: str, port: int) -> dict[str, Any]:
     password = os.environ.get("MONGO_AUDIT_PASS", "")
     auth_db = os.environ.get("MONGO_AUDIT_AUTH_DB", "admin")
     host = os.environ.get("MONGO_AUDIT_HOST", "127.0.0.1")
-    tls = os.environ.get("MONGO_AUDIT_TLS", "").lower() in {"1", "true", "yes", "enabled"}
-    tls_ca_file = os.environ.get("MONGO_AUDIT_TLS_CA_FILE", "")
-    tls_cert_key_file = os.environ.get("MONGO_AUDIT_TLS_CERT_KEY_FILE", "")
-    tls_allow_invalid_hostnames = os.environ.get(
-        "MONGO_AUDIT_TLS_ALLOW_INVALID_HOSTNAMES", ""
-    ).lower() in {"1", "true", "yes"}
 
     cmd = ["mongosh", "--quiet", "--host", host, "--port", str(port)]
-    if tls:
-        cmd.append("--tls")
-    if tls_ca_file:
-        cmd.extend(["--tlsCAFile", tls_ca_file])
-    if tls_cert_key_file:
-        cmd.extend(["--tlsCertificateKeyFile", tls_cert_key_file])
-    if tls_allow_invalid_hostnames:
-        cmd.append("--tlsAllowInvalidHostnames")
     if user:
         cmd.extend(["--username", user, "--password", password, "--authenticationDatabase", auth_db])
     cmd.extend(["--eval", script])
