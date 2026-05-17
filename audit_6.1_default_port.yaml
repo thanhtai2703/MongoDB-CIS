@@ -1,0 +1,22 @@
+---
+- name: "CIS Benchmark MongoDB Audit - Section 6.1"
+  hosts: database_nodes
+  become: yes
+  tasks:
+    - name: "Trích xuất cổng cấu hình trong /etc/mongod.conf"
+      # Lệnh dùng regex để tìm chính xác số cổng sau từ khóa 'port:'
+      shell: "grep -oP 'port:\\s*\\K[0-9]+' /etc/mongod.conf"
+      register: mongo_port_configured
+      changed_when: false
+      failed_when: false
+
+    - name: "Đánh giá"
+      assert:
+        that:
+          - "mongo_port_configured.stdout != '27017'"
+          - "mongo_port_configured.stdout != ''"
+        fail_msg: >
+          [FAIL] Node {{ inventory_hostname }} đang sử dụng cổng mặc định 27017 
+          hoặc chưa cấu hình cổng rõ ràng!
+        success_msg: >
+          [PASS] Node {{ inventory_hostname }} đang sử dụng cổng an toàn: {{ mongo_port_configured.stdout }}.

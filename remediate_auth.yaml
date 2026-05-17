@@ -23,7 +23,6 @@
         group: mongodb
         mode: "0400"
 
-
 - name: "Create MongoDB admin and audit users before enabling authorization"
   hosts: db-node-1
   become: yes
@@ -34,7 +33,7 @@
     mongo_audit_user: "MongoAudit"
     mongo_audit_pass: "AuditPass123!"
     mongo_auth_db: "admin"
-    mongo_seed_uri: "mongodb://{{ hostvars['db-node-1'].ansible_host }}:27017/?directConnection=true&w=majority"
+    mongo_seed_uri: "mongodb://{{ hostvars['db-node-1'].ansible_host }}:{{ mongodb_port }}/?directConnection=true&w=majority"
 
   tasks:
     - name: "Wait for MongoDB primary to accept connections"
@@ -85,7 +84,6 @@
       register: user_create
       changed_when: "'created user:' in user_create.stdout or 'updated user:' in user_create.stdout"
       no_log: true
-
 
 - name: "Enable MongoDB authentication and localhost bypass protection"
   hosts: database_nodes

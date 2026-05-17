@@ -6,7 +6,7 @@
 //  - Cố ý connect "đơn giản" để CIS audit có thể phát hiện vấn đề hạ tầng
 // =========================================================================
 
-$DB_IPS = "{% for host in groups['database_nodes'] %}{{ hostvars[host].ansible_host }}:27017{% if not loop.last %},{% endif %}{% endfor %}";
+$DB_IPS = "{% for host in groups['database_nodes'] %}{{ hostvars[host].ansible_host }}:{{ mongodb_port }}{% if not loop.last %},{% endif %}{% endfor %}";
 $DB_NAME = "{{ mongodb_db }}";
 $MONGO_USER = "{{ mongodb_app_user | default('') }}";
 $MONGO_PASS = "{{ mongodb_app_pass | default('') }}";

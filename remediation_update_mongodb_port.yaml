@@ -1,0 +1,69 @@
+---
+- name: "Cập nhật Port MongoDB"
+  hosts: all
+  become: yes
+  vars:
+    replica_set_name: "rs0"
+    php_version: "8.1"
+    mongodb_port: 27018
+    mongodb_db: "demo"
+    mongodb_collection: "messages"
+
+  tasks:
+    - name: "Cập nhật file cấu hình mongod.conf"
+      template:
+        src: templates/mongod.conf.j2
+        dest: /etc/mongod.conf
+      when: "'database_nodes' in group_names or inventory_hostname == 'db-node-backup'"
+      notify: "Restart MongoDB"
+
+    - name: "Ép chạy handler để khởi động lại MongoDB ngay lập tức"
+      meta: flush_handlers
+
+    - name: "Đợi MongoDB sẵn sàng trên cổng mới"
+      wait_for:
+        port: "{{ mongodb_port }}"
+        timeout: 60
+      when: "'database_nodes' in group_names or inventory_hostname == 'db-node-backup'"
+
+    - name: "Ép cụm nhận diện Port mới (rs.reconfig)"
+      shell: |
+        mongosh --port {{ mongodb_port }} --eval '
+          var cfg = rs.conf();
+          cfg.members[0].host = "{{ hostvars["db-node-1"].ansible_host }}:{{ mongodb_port }}";
+          cfg.members[1].host = "{{ hostvars["db-node-2"].ansible_host }}:{{ mongodb_port }}";
+          cfg.members[2].host = "{{ hostvars["db-node-backup"].ansible_host }}:{{ mongodb_port }}";
+          rs.reconfig(cfg, {force: true});
+        '
+      when: inventory_hostname == 'db-node-1'
+      ignore_errors: yes
+
+    - name: "Cập nhật lại index.php cho các Web"
+      template:
+        src: templates/index.php.j2
+        dest: "/var/www/html/index.php"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      when: "'web_servers' in group_names"
+
+    - name: "Khởi động lại PHP-FPM để áp dụng kết nối mới"
+      service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted
+      when: "'web_servers' in group_names"
+
+    - name: "Cập nhật script backup với Port mới"
+      template:
+        src: templates/backup_mongo.sh.j2
+        dest: /usr/local/bin/backup_mongo.sh
+        owner: root
+        group: root
+        mode: "0755"
+      when: inventory_hostname == 'db-node-backup'
+
+  handlers:
+    - name: "Restart MongoDB"
+      service:
+        name: mongod
+        state: restarted
