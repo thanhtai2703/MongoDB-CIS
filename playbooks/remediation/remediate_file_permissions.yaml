@@ -1,0 +1,51 @@
+---
+- name: "Remediate CIS MongoDB 8 file permissions"
+  hosts: database_nodes
+  become: yes
+  gather_facts: no
+  vars:
+    mongodb_keyfile_path: "/etc/mongodb-keyfile"
+    mongodb_db_path: "/var/lib/mongodb"
+
+  tasks:
+    - name: "Ensure MongoDB keyFile has strict permissions"
+      file:
+        path: "{{ mongodb_keyfile_path }}"
+        owner: mongodb
+        group: mongodb
+        mode: "0400"
+      when: mongodb_keyfile_path | length > 0
+
+    - name: "Ensure MongoDB database directory owner is mongodb"
+      file:
+        path: "{{ mongodb_db_path }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: "0770"
+
+    - name: "Ensure MongoDB database files are owned by mongodb"
+      file:
+        path: "{{ mongodb_db_path }}"
+        owner: mongodb
+        group: mongodb
+        recurse: yes
+
+    - name: "Restore MongoDB database directory mode after recursive ownership"
+      file:
+        path: "{{ mongodb_db_path }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: "0770"
+
+    - name: "Restart MongoDB after permission remediation"
+      service:
+        name: mongod
+        state: restarted
+
+    - name: "Wait for MongoDB port after permission remediation"
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 27017
+        timeout: 60

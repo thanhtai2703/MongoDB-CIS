@@ -53,10 +53,10 @@ Typical Ansible flow from the control node:
 
 ```bash
 ansible all -m ping
-ansible-playbook prepare.yaml
-ansible-playbook setup_mongodb.yaml
-ansible-playbook seed_data.yaml
-ansible-playbook audit_mongodb8_l1.yaml -e audit_phase=before
+ansible-playbook playbooks/core/prepare.yaml
+ansible-playbook playbooks/core/setup_mongodb.yaml
+ansible-playbook playbooks/core/seed_data.yaml
+ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml -e audit_phase=before
 ```
 
 ## Access
