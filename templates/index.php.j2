@@ -35,10 +35,14 @@ if ($MONGO_TLS) {
 
 $conn_error = null;
 $manager = null;
-try {
-    $manager = new MongoDB\Driver\Manager($uri, $uriOptions);
-} catch (Exception $e) {
-    $conn_error = $e->getMessage();
+if (!extension_loaded('mongodb')) {
+    $conn_error = "PHP MongoDB extension is not loaded.";
+} else {
+    try {
+        $manager = new MongoDB\Driver\Manager($uri, $uriOptions);
+    } catch (Throwable $e) {
+        $conn_error = $e->getMessage();
+    }
 }
 
 // -------------------- Helpers --------------------
@@ -70,7 +74,7 @@ function replica_status($manager) {
             'hosts'     => $res->hosts     ?? [],
             'ok'        => true,
         ];
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         return ['ok' => false, 'err' => $e->getMessage()];
     }
 }
@@ -88,7 +92,7 @@ function audit_write($manager, $db, $user, $action, $target, $extra = []) {
         ], $extra);
         $bulk->insert($doc);
         $manager->executeBulkWrite("$db.audit_log", $bulk);
-    } catch (Exception $e) { /* audit không được làm vỡ flow chính */ }
+    } catch (Throwable $e) { /* audit không được làm vỡ flow chính */ }
 }
 
 // -------------------- Xử lý POST --------------------
@@ -147,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $manager) {
             $manager->executeBulkWrite("$DB_NAME.messages", $bulk);
             audit_write($manager, $DB_NAME, 'admin', 'MESSAGE_DELETE', 'messages/' . $_POST['id']);
         }
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         $flash_code = 'err';
         error_log('[demo-app] write error: ' . $e->getMessage());
     }
@@ -171,7 +175,7 @@ if ($manager) {
         $data['messages'] = fetch_all($manager, $DB_NAME, 'messages',  ['created_at' => -1], 50);
         $data['orders']   = fetch_all($manager, $DB_NAME, 'orders',    ['created_at' => -1], 50);
         $data['audit']    = fetch_all($manager, $DB_NAME, 'audit_log', ['ts' => -1], 50);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         $conn_error = $e->getMessage();
     }
 }
