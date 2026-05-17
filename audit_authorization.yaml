@@ -1,12 +1,11 @@
 ---
-- name: "Audit CIS MongoDB 8 Benchmark Level 1"
+- name: "Audit CIS MongoDB 8 Section 3 - Authorization"
   hosts: database_nodes
   become: yes
   gather_facts: yes
   vars:
-    audit_phase: "before"
-    audit_remote_dir: "/tmp/cis_mongodb8_l1"
-    audit_local_dir: "reports/{{ audit_phase }}"
+    audit_remote_dir: "/tmp/cis_mongodb8_authorization"
+    audit_local_dir: "reports/authorization"
     mongo_audit_user: ""
     mongo_audit_pass: ""
     mongo_audit_auth_db: "admin"
@@ -33,23 +32,21 @@
         group: root
         mode: "0755"
 
-    - name: "Copy CIS MongoDB 8 Level 1 audit runner"
+    - name: "Copy authorization audit script"
       copy:
-        src: audit/cis_mongodb8_l1_audit.py
-        dest: "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+        src: audit/audit_authorization.py
+        dest: "{{ audit_remote_dir }}/audit_authorization.py"
         owner: root
         group: root
         mode: "0755"
 
-    - name: "Run CIS MongoDB 8 Level 1 audit"
+    - name: "Run authorization audit"
       command:
         argv:
           - python3
-          - "{{ audit_remote_dir }}/cis_mongodb8_l1_audit.py"
+          - "{{ audit_remote_dir }}/audit_authorization.py"
           - "--output"
           - "{{ audit_remote_dir }}/{{ inventory_hostname }}.json"
-          - "--markdown"
-          - "{{ audit_remote_dir }}/{{ inventory_hostname }}.md"
       environment:
         MONGO_AUDIT_HOST: "{{ ansible_host }}"
         MONGO_AUDIT_USER: "{{ mongo_audit_user }}"
@@ -59,22 +56,16 @@
         MONGO_AUDIT_TLS_CA_FILE: "{{ mongo_audit_tls_ca_file }}"
         MONGO_AUDIT_TLS_CERT_KEY_FILE: "{{ mongo_audit_tls_cert_key_file }}"
         MONGO_AUDIT_TLS_ALLOW_INVALID_HOSTNAMES: "{{ mongo_audit_tls_allow_invalid_hostnames }}"
-      register: cis_audit
+      register: authorization_audit
       changed_when: false
       failed_when: false
 
-    - name: "Show audit summary"
+    - name: "Show authorization audit summary"
       debug:
-        msg: "{{ inventory_hostname }} audit completed with rc={{ cis_audit.rc }}"
+        msg: "{{ inventory_hostname }} authorization audit completed with rc={{ authorization_audit.rc }}"
 
-    - name: "Fetch JSON report"
+    - name: "Fetch authorization report"
       fetch:
         src: "{{ audit_remote_dir }}/{{ inventory_hostname }}.json"
         dest: "{{ audit_local_dir }}/{{ inventory_hostname }}.json"
-        flat: yes
-
-    - name: "Fetch Markdown report"
-      fetch:
-        src: "{{ audit_remote_dir }}/{{ inventory_hostname }}.md"
-        dest: "{{ audit_local_dir }}/{{ inventory_hostname }}.md"
         flat: yes
