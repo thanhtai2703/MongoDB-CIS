@@ -12,6 +12,9 @@
     # rồi chạy lại web.yaml để cập nhật template.
     mongodb_app_user: ""
     mongodb_app_pass: ""
+    mongodb_app_tls: false
+    mongodb_tls_local_ca_file: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}/mongoCA.crt"
+    mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
 
   tasks:
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
@@ -69,6 +72,24 @@
       loop:
         - "80"
         - "443"
+
+    - name: "Create MongoDB TLS directory for web client"
+      file:
+        path: "{{ mongodb_tls_ca_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: mongodb_app_tls | bool
+
+    - name: "Install MongoDB CA certificate for web client"
+      copy:
+        src: "{{ mongodb_tls_local_ca_file }}"
+        dest: "{{ mongodb_tls_ca_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: mongodb_app_tls | bool
 
     - name: "7. Ghi đè cấu hình Default để hỗ trợ PHP"
       template:

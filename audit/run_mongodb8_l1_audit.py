@@ -20,7 +20,6 @@ SECTIONS = [
     {"name": "2 - Authentication", "script": "audit_authentication.py"},
     {"name": "3 - Authorization", "script": "audit_authorization.py"},
     {"name": "4 - Data Encryption", "script": "audit_data_encryption.py"},
-    {"name": "5 - Auditing", "script": "audit_system_activity.py"},
     {"name": "6 - Network Configuration", "script": "audit_network_configuration.py"},
     {"name": "7 - File Permissions", "script": "audit_file_permissions.py"},
 ]

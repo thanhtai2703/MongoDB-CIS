@@ -4,8 +4,9 @@
   become: yes
   gather_facts: yes
   vars:
+    audit_project_dir: "{{ playbook_dir }}/../.."
     audit_remote_dir: "/tmp/cis_mongodb8_authorization"
-    audit_local_dir: "reports/authorization"
+    audit_local_dir: "{{ audit_project_dir }}/reports/authorization"
     mongo_audit_user: ""
     mongo_audit_pass: ""
     mongo_audit_auth_db: "admin"

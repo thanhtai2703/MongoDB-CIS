@@ -1,10 +1,13 @@
 ---
-- name: "Generate MongoDB TLS CA and node certificates"
-  hosts: localhost
+- name: "Enable MongoDB TLS transport encryption"
+  hosts: database_nodes
+  become: yes
   gather_facts: no
   vars:
-    mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls"
+    mongodb_tls_dir: "/etc/ssl/mongodb"
+    mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}"
     mongodb_tls_days: 825
+    mongodb_keyfile_path: "/etc/mongodb-keyfile"
 
   tasks:
     - name: "Create local TLS artifact directory"
@@ -12,6 +15,9 @@
         path: "{{ mongodb_tls_local_dir }}"
         state: directory
         mode: "0700"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Generate local MongoDB CA private key"
       command:
@@ -22,6 +28,9 @@
           - "{{ mongodb_tls_local_dir }}/mongoCA.key"
           - "4096"
         creates: "{{ mongodb_tls_local_dir }}/mongoCA.key"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Generate local MongoDB CA certificate"
       command:
@@ -41,6 +50,9 @@
           - -out
           - "{{ mongodb_tls_local_dir }}/mongoCA.crt"
         creates: "{{ mongodb_tls_local_dir }}/mongoCA.crt"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Render OpenSSL node certificate configs"
       copy:
@@ -65,6 +77,9 @@
           IP.1 = {{ hostvars[item].ansible_host }}
           IP.2 = 127.0.0.1
       loop: "{{ groups['database_nodes'] }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Generate node private keys"
       command:
@@ -76,6 +91,9 @@
           - "4096"
         creates: "{{ mongodb_tls_local_dir }}/{{ item }}.key"
       loop: "{{ groups['database_nodes'] }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Generate node certificate signing requests"
       command:
@@ -91,6 +109,9 @@
           - "{{ mongodb_tls_local_dir }}/{{ item }}.cnf"
         creates: "{{ mongodb_tls_local_dir }}/{{ item }}.csr"
       loop: "{{ groups['database_nodes'] }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Sign node certificates with local CA"
       command:
@@ -116,24 +137,35 @@
           - "{{ mongodb_tls_local_dir }}/{{ item }}.cnf"
         creates: "{{ mongodb_tls_local_dir }}/{{ item }}.crt"
       loop: "{{ groups['database_nodes'] }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
     - name: "Build MongoDB PEM files from node key and certificate"
       shell: "cat {{ mongodb_tls_local_dir }}/{{ item }}.key {{ mongodb_tls_local_dir }}/{{ item }}.crt > {{ mongodb_tls_local_dir }}/{{ item }}.pem"
       args:
         creates: "{{ mongodb_tls_local_dir }}/{{ item }}.pem"
       loop: "{{ groups['database_nodes'] }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
+    - name: "Verify generated TLS artifacts exist on controller"
+      stat:
+        path: "{{ item }}"
+      register: tls_artifacts
+      loop:
+        - "{{ mongodb_tls_local_dir }}/mongoCA.crt"
+        - "{{ mongodb_tls_local_dir }}/{{ inventory_hostname }}.pem"
+      delegate_to: localhost
+      become: no
 
-- name: "Enable MongoDB TLS transport encryption"
-  hosts: database_nodes
-  become: yes
-  gather_facts: no
-  vars:
-    mongodb_tls_dir: "/etc/ssl/mongodb"
-    mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls"
-    mongodb_keyfile_path: "/etc/mongodb-keyfile"
+    - name: "Fail if TLS artifacts are missing on controller"
+      fail:
+        msg: "Missing local TLS artifact {{ item.stat.path }}. Re-run the playbook without skipping the generation tasks."
+      when: not item.stat.exists
+      loop: "{{ tls_artifacts.results }}"
 
-  tasks:
     - name: "Create MongoDB TLS directory"
       file:
         path: "{{ mongodb_tls_dir }}"

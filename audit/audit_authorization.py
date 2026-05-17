@@ -374,19 +374,17 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
     custom_roles_result = mongosh_eval(
         """
         const customRoles = [];
-        db.getMongo().getDBNames().forEach(function(dbName) {
-          const currentDb = db.getSiblingDB(dbName);
-          const result = currentDb.runCommand({
-            rolesInfo: 1,
-            showPrivileges: true,
-            showBuiltinRoles: false
-          });
-          if (result.ok === 1 && Array.isArray(result.roles)) {
-            result.roles.forEach(function(role) {
-              customRoles.push(role);
-            });
-          }
+        const adminDb = db.getSiblingDB("admin");
+        const adminRoles = adminDb.runCommand({
+          rolesInfo: 1,
+          showPrivileges: true,
+          showBuiltinRoles: false
         });
+        if (adminRoles.ok === 1 && Array.isArray(adminRoles.roles)) {
+          adminRoles.roles.forEach(function(role) {
+            customRoles.push(role);
+          });
+        }
         JSON.stringify(customRoles);
         """,
         port,
@@ -397,6 +395,7 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
     evidence: Any = {
         "cmd": custom_roles_result["cmd"],
         "rc": custom_roles_result["rc"],
+        "stdout": custom_roles_result["stdout"],
         "stderr": custom_roles_result["stderr"],
     }
 

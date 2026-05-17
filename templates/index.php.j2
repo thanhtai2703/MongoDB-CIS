@@ -10,21 +10,33 @@ $DB_IPS = "{% for host in groups['database_nodes'] %}{{ hostvars[host].ansible_h
 $DB_NAME = "{{ mongodb_db }}";
 $MONGO_USER = "{{ mongodb_app_user | default('') }}";
 $MONGO_PASS = "{{ mongodb_app_pass | default('') }}";
+$MONGO_TLS = {% if mongodb_app_tls | default(false) | bool %}true{% else %}false{% endif %};
+$MONGO_TLS_CA_FILE = "{{ mongodb_tls_ca_file | default('/etc/ssl/mongodb/mongoCA.crt') }}";
 
 // Build URI: nếu auth chưa bật thì connect anonymous, nếu đã bật thì dùng credential
 if ($MONGO_USER !== '') {
     $uri = sprintf(
-        "mongodb://%s:%s@%s/?replicaSet=rs0&authSource=admin",
+        "mongodb://%s:%s@%s",
         rawurlencode($MONGO_USER), rawurlencode($MONGO_PASS), $DB_IPS
     );
 } else {
-    $uri = "mongodb://$DB_IPS/?replicaSet=rs0";
+    $uri = "mongodb://$DB_IPS";
+}
+
+$uriOptions = ['replicaSet' => 'rs0'];
+if ($MONGO_USER !== '') {
+    $uriOptions['authSource'] = 'admin';
+}
+if ($MONGO_TLS) {
+    $uriOptions['tls'] = true;
+    $uriOptions['tlsCAFile'] = $MONGO_TLS_CA_FILE;
+    $uriOptions['tlsAllowInvalidHostnames'] = true;
 }
 
 $conn_error = null;
 $manager = null;
 try {
-    $manager = new MongoDB\Driver\Manager($uri);
+    $manager = new MongoDB\Driver\Manager($uri, $uriOptions);
 } catch (Exception $e) {
     $conn_error = $e->getMessage();
 }
@@ -168,7 +180,7 @@ if ($manager) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>UIT Lab - MongoDB Demo</title>
+    <title>MongoDB Demo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background:#f4f6f9; }
@@ -186,7 +198,7 @@ if ($manager) {
 
 <nav class="navbar navbar-dark bg-dark">
     <div class="container">
-        <span class="navbar-brand">UIT Lab · MongoDB Replica Set Demo</span>
+        <span class="navbar-brand">MongoDB Replica Set</span>
         <span class="text-light small">CIS Benchmark Workload</span>
     </div>
 </nav>
@@ -404,6 +416,7 @@ if ($manager) {
     <p class="text-muted small mt-3 mb-5">
         Connected: <code><?= h($DB_IPS) ?></code> · DB: <code><?= h($DB_NAME) ?></code>
         <?= $MONGO_USER ? ' · auth: <code>'.h($MONGO_USER).'</code>' : ' · <span class="text-danger">no auth</span>' ?>
+        <?= $MONGO_TLS ? ' · tls: <code>enabled</code>' : '' ?>
     </p>
 </div>
 
