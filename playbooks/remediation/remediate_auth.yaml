@@ -97,7 +97,7 @@
   tasks:
     - name: "Render MongoDB auth-enabled config"
       template:
-        src: templates/mongod_auth.conf.j2
+        src: ../../templates/mongod_auth.conf.j2
         dest: /etc/mongod.conf
         owner: root
         group: root

@@ -6,8 +6,8 @@ Level 1 MongoDB recommendations in the benchmark's seven sections.
 ## Files
 
 - `audit/run_mongodb8_l1_audit.py`: combined runner that calls the split section scripts.
-- `audit_mongodb8_l1.yaml`: Ansible wrapper that runs the audit and fetches reports.
-- `audit_sections.yaml`: runs the split section scripts and fetches one report per section.
+- `playbooks/audit/audit_mongodb8_l1.yaml`: Ansible wrapper that runs the audit and fetches reports.
+- `playbooks/audit/audit_sections.yaml`: runs the split section scripts and fetches one report per section.
 - `audit/audit_software.py`: Section 1 runner.
 - `audit/audit_authentication.py`: Section 2 runner.
 - `audit/audit_authorization.py`: Section 3 runner.
@@ -20,36 +20,58 @@ Level 1 MongoDB recommendations in the benchmark's seven sections.
 ## Run
 
 ```bash
-ansible-playbook audit_mongodb8_l1.yaml -e audit_phase=before
+ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml -e audit_phase=before
 ```
 
 To run the split section audits:
 
 ```bash
-ansible-playbook audit_sections.yaml -e audit_phase=before
+ansible-playbook playbooks/audit/audit_sections.yaml -e audit_phase=before
 ```
 
 After remediation:
 
 ```bash
-ansible-playbook audit_mongodb8_l1.yaml -e audit_phase=after
+ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml -e audit_phase=after
 ```
 
 Authentication/RBAC remediation for `2.1`, `2.2`, and `3.2`:
 
 ```bash
-ansible-playbook remediate_auth.yaml \
+ansible-playbook playbooks/remediation/remediate_auth.yaml \
   -e mongo_admin_pass='AdminPass123!' \
   -e mongo_audit_pass='AuditPass123!'
+```
+
+File permission remediation for `7.1` and `7.2`:
+
+```bash
+ansible-playbook playbooks/remediation/remediate_file_permissions.yaml
+```
+
+TLS remediation for `4.2` and `4.3`:
+
+```bash
+ansible-playbook playbooks/remediation/remediate_tls.yaml
 ```
 
 If MongoDB authentication is already enabled, pass an audit account:
 
 ```bash
-ansible-playbook audit_mongodb8_l1.yaml \
+ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
   -e audit_phase=after \
   -e mongo_audit_user=MongoAudit \
   -e mongo_audit_pass='AuditPass123!'
+```
+
+If TLS has also been enabled, pass TLS audit options:
+
+```bash
+ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
+  -e audit_phase=after \
+  -e mongo_audit_user=MongoAudit \
+  -e mongo_audit_pass='AuditPass123!' \
+  -e mongo_audit_tls=true
 ```
 
 ## Level 1 Controls Covered

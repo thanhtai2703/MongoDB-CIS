@@ -72,13 +72,13 @@
 
     - name: "7. Ghi đè cấu hình Default để hỗ trợ PHP"
       template:
-        src: templates/nginx_default.j2
+        src: ../../templates/nginx_default.j2
         dest: /etc/nginx/sites-available/default
       notify: "Restart Nginx"
 
     - name: "8. Triển khai mã nguồn PHP trực tiếp vào thư mục html"
       template:
-        src: templates/index.php.j2
+        src: ../../templates/index.php.j2
         dest: "{{ app_root }}/index.php"
         owner: www-data
         group: www-data

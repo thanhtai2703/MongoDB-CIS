@@ -1,0 +1,21 @@
+storage:
+  dbPath: /var/lib/mongodb
+systemLog:
+  destination: file
+  path: /var/log/mongodb/mongod.log
+  logAppend: true
+net:
+  port: 27017
+  bindIp: 0.0.0.0
+  tls:
+    mode: requireTLS
+    certificateKeyFile: "{{ mongodb_tls_dir }}/{{ inventory_hostname }}.pem"
+    CAFile: "{{ mongodb_tls_dir }}/mongoCA.crt"
+    disabledProtocols: TLS1_0,TLS1_1
+replication:
+  replSetName: "{{ replica_set_name }}"
+security:
+  authorization: enabled
+  keyFile: "{{ mongodb_keyfile_path }}"
+setParameter:
+  enableLocalhostAuthBypass: false
