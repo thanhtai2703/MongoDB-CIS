@@ -272,22 +272,140 @@ def check_3_3_non_root_service_user(results: list[dict[str, Any]]) -> None:
     )
 
 
+def role_names(roles: Any) -> list[str]:
+    names: list[str] = []
+
+    if not isinstance(roles, list):
+        return names
+
+    for item in roles:
+        if isinstance(item, dict):
+            role = item.get("role")
+        else:
+            role = item
+
+        if role is not None:
+            names.append(str(role))
+
+    return names
+
+
+def privilege_has_any_resource(privileges: Any) -> bool:
+    if not isinstance(privileges, list):
+        return False
+
+    for privilege in privileges:
+        if not isinstance(privilege, dict):
+            continue
+
+        resource = privilege.get("resource", {})
+        if isinstance(resource, dict) and resource.get("anyResource") is True:
+            return True
+
+    return False
+
+
+def summarize_custom_role(role: dict[str, Any]) -> dict[str, Any]:
+    inherited_role_names = sorted(set(role_names(role.get("inheritedRoles")) + role_names(role.get("roles"))))
+    privilege_count = len(role.get("privileges") or [])
+    inherited_privilege_count = len(role.get("inheritedPrivileges") or [])
+    has_any_resource = privilege_has_any_resource(role.get("privileges")) or privilege_has_any_resource(
+        role.get("inheritedPrivileges")
+    )
+    dangerous_inherited_roles = [
+        role_name for role_name in inherited_role_names if role_name in {"root", "dbOwner"}
+    ]
+
+    summary = {
+        "db": role.get("db"),
+        "role": role.get("role"),
+        "inherited_roles": inherited_role_names,
+        "privilege_count": privilege_count,
+        "inherited_privilege_count": inherited_privilege_count,
+        "has_anyResource": has_any_resource,
+    }
+
+    if dangerous_inherited_roles:
+        summary["dangerous_inherited_roles"] = dangerous_inherited_roles
+
+    return summary
+
+
 def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -> None:
-    roles_info = mongosh_eval(
-        'JSON.stringify(db.getSiblingDB("admin").runCommand('
-        '{rolesInfo:1,showPrivileges:true,showBuiltinRoles:true}))',
+    custom_roles_result = mongosh_eval(
+        """
+        const customRoles = [];
+        db.getMongo().getDBNames().forEach(function(dbName) {
+          const currentDb = db.getSiblingDB(dbName);
+          const result = currentDb.runCommand({
+            rolesInfo: 1,
+            showPrivileges: true,
+            showBuiltinRoles: false
+          });
+          if (result.ok === 1 && Array.isArray(result.roles)) {
+            result.roles.forEach(function(role) {
+              customRoles.push(role);
+            });
+          }
+        });
+        JSON.stringify(customRoles);
+        """,
         port,
     )
+
+    status = "MANUAL"
+    actual: Any = "Unable to query custom roles automatically"
+    evidence: Any = {
+        "cmd": custom_roles_result["cmd"],
+        "rc": custom_roles_result["rc"],
+        "stderr": custom_roles_result["stderr"],
+    }
+
+    if custom_roles_result["rc"] == 0:
+        try:
+            custom_roles = json.loads(custom_roles_result["stdout"] or "[]")
+        except json.JSONDecodeError:
+            custom_roles = []
+            evidence["stdout_parse_error"] = custom_roles_result["stdout"]
+
+        role_summaries = [
+            summarize_custom_role(role)
+            for role in custom_roles
+            if isinstance(role, dict)
+        ]
+        dangerous_roles = [
+            role
+            for role in role_summaries
+            if role["has_anyResource"] or role.get("dangerous_inherited_roles")
+        ]
+
+        evidence.update(
+            {
+                "custom_role_count": len(role_summaries),
+                "custom_roles": role_summaries,
+                "dangerous_roles": dangerous_roles,
+            }
+        )
+
+        if not role_summaries:
+            status = "PASS"
+            actual = "No custom roles found"
+        elif dangerous_roles:
+            status = "FAIL"
+            actual = dangerous_roles
+        else:
+            status = "MANUAL"
+            actual = role_summaries
 
     add_result(
         results,
         "3.4",
         "Ensure that each role for each MongoDB database is needed and grants only the necessary privileges",
         "Manual",
-        "MANUAL",
-        "All roles and privileges are reviewed and documented",
-        "Manual review required",
-        roles_info,
+        status,
+        "No dangerous custom role uses anyResource or inherits root/dbOwner",
+        actual,
+        evidence,
     )
 
 
