@@ -1,0 +1,130 @@
+---
+- name: "Remediate CIS MongoDB 8 authorization roles"
+  hosts: db-node-1
+  become: yes
+  gather_facts: no
+  vars:
+    mongo_admin_user: "MongoAdmin"
+    mongo_admin_pass: "AdminPass123!"
+    mongo_audit_user: "MongoAudit"
+    mongo_audit_pass: "AuditPass123!"
+    mongo_auth_db: "admin"
+    mongo_port: 27017
+    mongo_audit_tls: "false"
+    mongo_audit_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
+    mongo_audit_tls_cert_key_file: "/etc/ssl/mongodb/{{ inventory_hostname }}.pem"
+    mongo_audit_tls_allow_invalid_hostnames: "false"
+    replace_demo_custom_roles: true
+    dangerous_custom_role_names: []
+
+  tasks:
+    - name: "Build MongoDB connection arguments"
+      set_fact:
+        mongo_connection_args: >-
+          --host {{ ansible_host if (mongo_audit_tls | bool) else '127.0.0.1' }}
+          --port {{ mongo_port }}
+          {% if mongo_audit_tls | bool -%}
+          --tls
+          --tlsCAFile {{ mongo_audit_tls_ca_file }}
+          --tlsCertificateKeyFile {{ mongo_audit_tls_cert_key_file }}
+          {% if mongo_audit_tls_allow_invalid_hostnames | bool -%}
+          --tlsAllowInvalidHostnames
+          {%- endif %}
+          {%- endif %}
+
+    - name: "Remove broad roles from MongoAudit"
+      shell: |
+        mongosh --quiet {{ mongo_connection_args }} \
+          --username "{{ mongo_admin_user }}" \
+          --password "{{ mongo_admin_pass }}" \
+          --authenticationDatabase "{{ mongo_auth_db }}" <<'MONGO'
+        const adb = db.getSiblingDB("{{ mongo_auth_db }}");
+
+        if (adb.getUser("{{ mongo_audit_user }}")) {
+          adb.updateUser("{{ mongo_audit_user }}", {
+            pwd: "{{ mongo_audit_pass }}",
+            roles: [
+              { role: "clusterMonitor", db: "admin" },
+              { role: "readAnyDatabase", db: "admin" }
+            ]
+          });
+          print("updated audit user with reduced roles");
+        } else {
+          adb.createUser({
+            user: "{{ mongo_audit_user }}",
+            pwd: "{{ mongo_audit_pass }}",
+            roles: [
+              { role: "clusterMonitor", db: "admin" },
+              { role: "readAnyDatabase", db: "admin" }
+            ]
+          });
+          print("created audit user with reduced roles");
+        }
+        MONGO
+      register: audit_user_roles
+      changed_when: "'updated audit user' in audit_user_roles.stdout or 'created audit user' in audit_user_roles.stdout"
+      no_log: true
+
+    - name: "Replace demo custom roles with built-in least-privilege roles"
+      shell: |
+        mongosh --quiet {{ mongo_connection_args }} \
+          --username "{{ mongo_admin_user }}" \
+          --password "{{ mongo_admin_pass }}" \
+          --authenticationDatabase "{{ mongo_auth_db }}" <<'MONGO'
+        const adb = db.getSiblingDB("admin");
+
+        function updateIfExists(username, roles) {
+          if (adb.getUser(username)) {
+            adb.updateUser(username, { roles: roles });
+            print("updated app user: " + username);
+          }
+        }
+
+        updateIfExists("app_reader", [
+          { role: "read", db: "demo" }
+        ]);
+
+        updateIfExists("app_writer", [
+          { role: "readWrite", db: "demo" }
+        ]);
+
+        updateIfExists("app_admin", [
+          { role: "readWrite", db: "demo" },
+          { role: "dbAdmin", db: "demo" }
+        ]);
+
+        ["demoReader", "demoWriter", "demoAdmin"].forEach(function(roleName) {
+          try {
+            adb.dropRole(roleName);
+            print("dropped demo custom role: " + roleName);
+          } catch (e) {
+            print("demo custom role absent: " + roleName);
+          }
+        });
+        MONGO
+      register: demo_role_migration
+      changed_when: "'updated app user:' in demo_role_migration.stdout or 'dropped demo custom role:' in demo_role_migration.stdout"
+      no_log: true
+      when: replace_demo_custom_roles | bool
+
+    - name: "Drop explicitly listed dangerous custom roles"
+      shell: |
+        mongosh --quiet {{ mongo_connection_args }} \
+          --username "{{ mongo_admin_user }}" \
+          --password "{{ mongo_admin_pass }}" \
+          --authenticationDatabase "{{ mongo_auth_db }}" <<'MONGO'
+        const roles = {{ dangerous_custom_role_names | to_json }};
+        roles.forEach(function(item) {
+          const roleDb = db.getSiblingDB(item.db || "admin");
+          try {
+            roleDb.dropRole(item.role);
+            print("dropped custom role: " + (item.db || "admin") + "." + item.role);
+          } catch (e) {
+            print("custom role absent: " + (item.db || "admin") + "." + item.role);
+          }
+        });
+        MONGO
+      register: dangerous_role_drop
+      changed_when: "'dropped custom role:' in dangerous_role_drop.stdout"
+      no_log: true
+      when: dangerous_custom_role_names | length > 0

@@ -197,6 +197,11 @@ def mongosh_eval(script: str, port: int) -> dict[str, Any]:
 
 
 def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
+    allowed_admin_users = {
+        user.strip()
+        for user in os.environ.get("MONGO_AUDIT_ALLOWED_ADMIN_USERS", "").split(",")
+        if user.strip()
+    }
     risky_roles = [
         "root",
         "dbOwner",
@@ -218,8 +223,24 @@ def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
             risky_users = json.loads(risky_admin_roles["stdout"] or "[]")
         except json.JSONDecodeError:
             risky_users = risky_admin_roles["stdout"]
-        status = "PASS" if risky_users == [] else "FAIL"
-        actual = risky_users
+        if isinstance(risky_users, list):
+            undocumented_users = [
+                user
+                for user in risky_users
+                if str(user.get("user", "")) not in allowed_admin_users
+            ]
+            status = "PASS" if undocumented_users == [] else "FAIL"
+            actual = {
+                "undocumented_broad_role_users": undocumented_users,
+                "documented_admin_users": [
+                    user
+                    for user in risky_users
+                    if str(user.get("user", "")) in allowed_admin_users
+                ],
+            }
+        else:
+            status = "FAIL"
+            actual = risky_users
     else:
         status = "MANUAL"
         actual = "Unable to query users automatically"
@@ -232,7 +253,10 @@ def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
         status,
         "No normal account has broad administrative roles unless documented",
         actual,
-        risky_admin_roles,
+        {
+            "query": risky_admin_roles,
+            "allowed_admin_users": sorted(allowed_admin_users),
+        },
     )
 
 
