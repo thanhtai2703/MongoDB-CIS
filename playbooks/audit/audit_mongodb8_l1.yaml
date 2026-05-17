@@ -10,6 +10,10 @@
     mongo_audit_user: ""
     mongo_audit_pass: ""
     mongo_audit_auth_db: "admin"
+    mongo_audit_tls: "false"
+    mongo_audit_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
+    mongo_audit_tls_cert_key_file: "/etc/ssl/mongodb/{{ inventory_hostname }}.pem"
+    mongo_audit_tls_allow_invalid_hostnames: "false"
     audit_package_files:
       - run_mongodb8_l1_audit.py
       - audit_software.py
@@ -40,7 +44,7 @@
 
     - name: "Copy CIS MongoDB 8 Level 1 audit package"
       copy:
-        src: "audit/{{ item }}"
+        src: "../../audit/{{ item }}"
         dest: "{{ audit_remote_dir }}/{{ item }}"
         owner: root
         group: root
@@ -59,9 +63,14 @@
           - "--sections-dir"
           - "{{ audit_remote_dir }}/sections"
       environment:
+        MONGO_AUDIT_HOST: "{{ ansible_host if (mongo_audit_tls | bool) else '127.0.0.1' }}"
         MONGO_AUDIT_USER: "{{ mongo_audit_user }}"
         MONGO_AUDIT_PASS: "{{ mongo_audit_pass }}"
         MONGO_AUDIT_AUTH_DB: "{{ mongo_audit_auth_db }}"
+        MONGO_AUDIT_TLS: "{{ mongo_audit_tls }}"
+        MONGO_AUDIT_TLS_CA_FILE: "{{ mongo_audit_tls_ca_file }}"
+        MONGO_AUDIT_TLS_CERT_KEY_FILE: "{{ mongo_audit_tls_cert_key_file }}"
+        MONGO_AUDIT_TLS_ALLOW_INVALID_HOSTNAMES: "{{ mongo_audit_tls_allow_invalid_hostnames }}"
       register: cis_audit
       changed_when: false
       failed_when: false

@@ -52,7 +52,7 @@
 
     - name: "Render MongoDB config"
       template:
-        src: templates/mongod.conf.j2
+        src: ../../templates/mongod.conf.j2
         dest: /etc/mongod.conf
         owner: root
         group: root
