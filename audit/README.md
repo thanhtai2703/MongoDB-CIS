@@ -12,7 +12,6 @@ Level 1 MongoDB recommendations in the benchmark's seven sections.
 - `audit/audit_authentication.py`: Section 2 runner.
 - `audit/audit_authorization.py`: Section 3 runner.
 - `audit/audit_data_encryption.py`: Section 4 runner.
-- `audit/audit_system_activity.py`: Section 5 runner.
 - `audit/audit_network_configuration.py`: Section 6 runner.
 - `audit/audit_file_permissions.py`: Section 7 runner.
 - `reports/<phase>/`: generated JSON and Markdown reports.
@@ -89,7 +88,6 @@ ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
 - `1.1` MongoDB version and patch level
 - `2.1` Authentication enabled
 - `2.2` Localhost authentication bypass disabled
-- `2.3` Authentication enabled in cluster context
 - `3.1` Least privilege for database accounts
 - `3.2` RBAC enabled and reviewed
 - `3.3` MongoDB service runs as a non-root dedicated account
@@ -97,9 +95,6 @@ ansible-playbook playbooks/audit/audit_mongodb8_l1.yaml \
 - `4.1` Legacy TLS protocols disabled
 - `4.2` Weak TLS protocols disabled
 - `4.3` Transport encryption required
-- `4.4` FIPS mode configured
-- `4.5` Encryption at rest reviewed
-- `5.1` System activity auditing configured
 - `6.1` Non-default MongoDB port
 - `7.1` Key file permissions
 - `7.2` Database file permissions

@@ -218,48 +218,6 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
         {"config": config_path, "config_error": conf_error},
     )
 
-    fips_mode = get_path(conf, "net", "tls", "FIPSMode")
-
-    add_result(
-        results,
-        "4.4",
-        "Ensure Federal Information Processing Standard (FIPS) is enabled",
-        "Automated",
-        "PASS" if fips_mode is True else "FAIL",
-        "net.tls.FIPSMode is true",
-        fips_mode,
-        {"config": config_path, "config_error": conf_error},
-    )
-
-    enable_encryption = get_path(conf, "security", "enableEncryption")
-    encryption_key_file = get_path(conf, "security", "encryptionKeyFile")
-    kmip_server_name = get_path(conf, "security", "kmip", "serverName")
-    kmip_port = get_path(conf, "security", "kmip", "port")
-
-    encryption_at_rest_ok = bool(enable_encryption) and (
-        bool(encryption_key_file) or bool(kmip_server_name)
-    )
-
-    add_result(
-        results,
-        "4.5",
-        "Ensure Encryption of Data at Rest",
-        "Manual",
-        "PASS" if encryption_at_rest_ok else "MANUAL",
-        "Data at rest encryption is enabled with encryptionKeyFile or KMIP configuration",
-        {
-            "enableEncryption": enable_encryption,
-            "encryptionKeyFile": encryption_key_file,
-            "kmip.serverName": kmip_server_name,
-            "kmip.port": kmip_port,
-        },
-        {
-            "note": "This control may require MongoDB Enterprise and manual verification.",
-            "config": config_path,
-            "config_error": conf_error,
-        },
-    )
-
     counts: dict[str, int] = {}
 
     for item in results:

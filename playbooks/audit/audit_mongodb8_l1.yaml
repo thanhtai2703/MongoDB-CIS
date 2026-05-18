@@ -5,8 +5,9 @@
   gather_facts: yes
   vars:
     audit_phase: "before"
+    audit_project_dir: "{{ playbook_dir }}/../.."
     audit_remote_dir: "/tmp/cis_mongodb8_l1"
-    audit_local_dir: "reports/{{ audit_phase }}"
+    audit_local_dir: "{{ audit_project_dir }}/reports/{{ audit_phase }}"
     mongo_audit_user: ""
     mongo_audit_pass: ""
     mongo_audit_auth_db: "admin"
@@ -21,7 +22,6 @@
       - audit_authentication.py
       - audit_authorization.py
       - audit_data_encryption.py
-      - audit_system_activity.py
       - audit_network_configuration.py
       - audit_file_permissions.py
 

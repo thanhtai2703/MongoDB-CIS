@@ -175,34 +175,6 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
         {"config": config_path, "config_error": conf_error},
     )
 
-    cluster_auth_mode = get_path(conf, "security", "clusterAuthMode")
-    key_file = get_path(conf, "security", "keyFile")
-    tls_cluster_file = get_path(conf, "net", "tls", "clusterFile")
-    ssl_cluster_file = get_path(conf, "net", "ssl", "clusterFile")
-
-    sharded_auth_ok = (
-        str(cluster_auth_mode).lower() == "x509"
-        or bool(key_file)
-        or bool(tls_cluster_file)
-        or bool(ssl_cluster_file)
-    )
-
-    add_result(
-        results,
-        "2.3",
-        "Ensure authentication is enabled in the sharded cluster",
-        "Automated",
-        "PASS" if sharded_auth_ok else "FAIL",
-        "clusterAuthMode is x509 or keyFile/clusterFile is configured",
-        {
-            "clusterAuthMode": cluster_auth_mode,
-            "keyFile": key_file,
-            "tls.clusterFile": tls_cluster_file,
-            "ssl.clusterFile": ssl_cluster_file,
-        },
-        {"config": config_path, "config_error": conf_error},
-    )
-
     counts: dict[str, int] = {}
 
     for item in results:

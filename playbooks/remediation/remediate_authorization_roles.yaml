@@ -18,19 +18,45 @@
     dangerous_custom_role_names: []
 
   tasks:
+    - name: "Auto-detect whether mongod is configured for TLS"
+      shell: "grep -qE '^[[:space:]]*mode:[[:space:]]*requireTLS' /etc/mongod.conf && echo true || echo false"
+      register: mongod_tls_detect
+      changed_when: false
+
+    - name: "Resolve effective TLS mode (mongod.conf is the source of truth)"
+      set_fact:
+        mongo_audit_tls_effective: "{{ mongod_tls_detect.stdout | trim }}"
+        mongo_audit_tls_allow_invalid_hostnames_effective: "true"
+
+    - name: "Show resolved TLS mode for connection"
+      debug:
+        msg: "mongod reports TLS={{ mongo_audit_tls_effective }} -> connecting with TLS={{ mongo_audit_tls_effective }}"
+
     - name: "Build MongoDB connection arguments"
       set_fact:
         mongo_connection_args: >-
-          --host {{ ansible_host if (mongo_audit_tls | bool) else '127.0.0.1' }}
+          --host {{ ansible_host if (mongo_audit_tls_effective | bool) else '127.0.0.1' }}
           --port {{ mongo_port }}
-          {% if mongo_audit_tls | bool -%}
+          {% if mongo_audit_tls_effective | bool -%}
           --tls
           --tlsCAFile {{ mongo_audit_tls_ca_file }}
           --tlsCertificateKeyFile {{ mongo_audit_tls_cert_key_file }}
-          {% if mongo_audit_tls_allow_invalid_hostnames | bool -%}
           --tlsAllowInvalidHostnames
           {%- endif %}
-          {%- endif %}
+
+    - name: "Wait until this node is the writable primary"
+      shell: >-
+        mongosh --quiet {{ mongo_connection_args }}
+        --username "{{ mongo_admin_user }}"
+        --password "{{ mongo_admin_pass }}"
+        --authenticationDatabase "{{ mongo_auth_db }}"
+        --eval "db.hello().isWritablePrimary"
+        | tail -n1
+      register: primary_check
+      until: primary_check.stdout | trim == 'true'
+      retries: 24
+      delay: 5
+      changed_when: false
 
     - name: "Remove broad roles from MongoAudit"
       shell: |
@@ -63,7 +89,7 @@
         MONGO
       register: audit_user_roles
       changed_when: "'updated audit user' in audit_user_roles.stdout or 'created audit user' in audit_user_roles.stdout"
-      no_log: true
+      no_log: false
 
     - name: "Replace demo custom roles with built-in least-privilege roles"
       shell: |
@@ -104,7 +130,7 @@
         MONGO
       register: demo_role_migration
       changed_when: "'updated app user:' in demo_role_migration.stdout or 'dropped demo custom role:' in demo_role_migration.stdout"
-      no_log: true
+      no_log: false
       when: replace_demo_custom_roles | bool
 
     - name: "Drop explicitly listed dangerous custom roles"
@@ -126,5 +152,5 @@
         MONGO
       register: dangerous_role_drop
       changed_when: "'dropped custom role:' in dangerous_role_drop.stdout"
-      no_log: true
+      no_log: false
       when: dangerous_custom_role_names | length > 0

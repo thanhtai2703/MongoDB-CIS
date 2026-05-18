@@ -5,23 +5,53 @@
     app_root: "/var/www/html"
     mongodb_db: "demo"
     mongodb_collection: "messages"
-    # Credential PHP dùng để connect Replica Set.
-    # Để rỗng khi authorization chưa được bật (demo "before audit").
-    # Sau khi remediate (bật security.authorization), set 2 biến này
-    # (vd: -e mongodb_app_user=app_writer mongodb_app_pass=WriterPass123!)
-    # rồi chạy lại web.yaml để cập nhật template.
     mongodb_app_user: ""
     mongodb_app_pass: ""
+    mongodb_app_tls: false
+    mongodb_tls_local_ca_file: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}/mongoCA.crt"
+    mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
+    php_libresolv_path: "/lib/x86_64-linux-gnu/libresolv.so.2"
 
   tasks:
+    - name: "Pre-flight: ensure openssl is installed for TLS probe"
+      apt:
+        name: openssl
+        state: present
+      run_once: yes
+
+    - name: "Pre-flight: detect whether MongoDB requires TLS (from web host)"
+      shell: >-
+        timeout 5 bash -c
+        'echo | openssl s_client
+        -connect {{ hostvars[groups["database_nodes"][0]].ansible_host }}:27017
+        2>&1
+        | grep -qE "(BEGIN CERTIFICATE|SSL-Session|Server certificate)"
+        && echo tls || echo plain'
+      register: mongo_tls_probe
+      changed_when: false
+      failed_when: false
+      run_once: yes
+
+    - name: "Pre-flight: assert mongodb_app_tls matches server state"
+      assert:
+        that:
+          - (mongo_tls_probe.stdout == 'tls') == (mongodb_app_tls | bool)
+        fail_msg: >-
+          MongoDB at {{ hostvars[groups['database_nodes'][0]].ansible_host }}:27017
+          reports TLS={{ mongo_tls_probe.stdout }} but mongodb_app_tls={{ mongodb_app_tls }}.
+          Re-run with -e mongodb_app_tls={{ 'true' if mongo_tls_probe.stdout == 'tls' else 'false' }}
+          (and matching mongodb_app_user/mongodb_app_pass if auth is enabled).
+        success_msg: "Client TLS setting matches MongoDB server state ({{ mongo_tls_probe.stdout }})."
+      run_once: yes
+
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
       apt:
         name:
           - nginx
+          - "php{{ php_version }}-cli"
           - "php{{ php_version }}-fpm"
-          - "php{{ php_version }}-dev"
-          - php-pear
-          - build-essential
+          - "php{{ php_version }}-mongodb"
+          - php-mongodb
           - libcurl4-openssl-dev
           - pkg-config
           - libssl-dev
@@ -29,23 +59,14 @@
         update_cache: yes
 
     - name: "2. Kiểm tra xem PHP engine đã nạp module mongodb chưa"
-      # Thay đổi từ 'pecl list' sang 'php -m' để kiểm tra thực tế runtime
       shell: "php -m | grep mongodb"
       register: mongodb_php_check
       failed_when: false
       changed_when: false
 
-    - name: "3. Biên dịch và cài đặt MongoDB Driver nếu chưa có"
-      shell: |
-        printf "\n" | pecl install mongodb
-      # Chỉ chạy khi module chưa xuất hiện trong 'php -m'
-      when: mongodb_php_check.rc != 0
-      notify: "Restart PHP-FPM"
-
-    - name: "4. Cấu hình file ini để PHP nhận diện module mongodb"
+    - name: "3. Cấu hình file ini để PHP nhận diện module mongodb"
       copy:
         dest: "/etc/php/{{ php_version }}/{{ item }}/conf.d/20-mongodb.ini"
-        # Đảm bảo nội dung chính xác để PHP nạp extension
         content: "extension=mongodb.so"
         owner: root
         group: root
@@ -55,13 +76,39 @@
         - cli
       notify: "Restart PHP-FPM"
 
-    - name: "5. Đảm bảo Nginx đã được bật và khởi chạy cùng hệ thống"
+    - name: "Enable MongoDB PHP module"
+      command: "phpenmod -v {{ php_version }} mongodb"
+      changed_when: false
+      notify: "Restart PHP-FPM"
+
+    - name: "Create PHP-FPM systemd override directory"
+      file:
+        path: "/etc/systemd/system/php{{ php_version }}-fpm.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Preload libresolv for PHP-FPM mongodb extension"
+      copy:
+        dest: "/etc/systemd/system/php{{ php_version }}-fpm.service.d/override.conf"
+        content: |
+          [Service]
+          Environment=LD_PRELOAD={{ php_libresolv_path }}
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart PHP-FPM
+
+    - name: "4. Đảm bảo Nginx đã được bật và khởi chạy cùng hệ thống"
       service:
         name: nginx
         state: started
         enabled: yes
 
-    - name: "6. Mở Port 80 và 443 trên tường lửa"
+    - name: "5. Mở Port 80 và 443 trên tường lửa"
       community.general.ufw:
         rule: allow
         port: "{{ item }}"
@@ -70,13 +117,62 @@
         - "80"
         - "443"
 
-    - name: "7. Ghi đè cấu hình Default để hỗ trợ PHP"
+    - name: "Create MongoDB TLS directory for web client"
+      file:
+        path: "{{ mongodb_tls_ca_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: mongodb_app_tls | bool
+
+    - name: "Verify local MongoDB CA artifact exists on controller"
+      stat:
+        path: "{{ mongodb_tls_local_ca_file }}"
+      register: local_ca_stat
+      delegate_to: localhost
+      become: no
+      when: mongodb_app_tls | bool
+
+    - name: "Fail fast if controller is missing the MongoDB CA"
+      fail:
+        msg: >-
+          Missing local CA at {{ mongodb_tls_local_ca_file }}.
+          Run playbooks/remediation/remediate_tls.yaml first, or pass
+          mongodb_tls_local_ca_file pointing at an existing CA file.
+      when: mongodb_app_tls | bool and not local_ca_stat.stat.exists
+
+    - name: "Install MongoDB CA certificate for web client"
+      copy:
+        src: "{{ mongodb_tls_local_ca_file }}"
+        dest: "{{ mongodb_tls_ca_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: mongodb_app_tls | bool
+      notify: "Restart PHP-FPM"
+
+    - name: "Verify MongoDB TLS endpoint trusts the installed CA"
+      shell: >-
+        openssl s_client
+        -connect {{ hostvars[groups['database_nodes'][0]].ansible_host }}:27017
+        -CAfile {{ mongodb_tls_ca_file }}
+        -verify_return_error
+        -servername {{ groups['database_nodes'][0] }}
+        </dev/null 2>&1
+        | grep -E "Verify return code|verify error"
+      register: tls_verify
+      changed_when: false
+      failed_when: "'Verify return code: 0' not in tls_verify.stdout"
+      when: mongodb_app_tls | bool
+
+    - name: "6. Ghi đè cấu hình Default để hỗ trợ PHP"
       template:
         src: ../../templates/nginx_default.j2
         dest: /etc/nginx/sites-available/default
       notify: "Restart Nginx"
 
-    - name: "8. Triển khai mã nguồn PHP trực tiếp vào thư mục html"
+    - name: "7. Triển khai mã nguồn PHP trực tiếp vào thư mục html"
       template:
         src: ../../templates/index.php.j2
         dest: "{{ app_root }}/index.php"
@@ -84,28 +180,40 @@
         group: www-data
         mode: "0644"
 
-    - name: "9. Xóa file index.html mặc định của Nginx"
+    - name: "8. Xóa file index.html mặc định của Nginx"
       file:
         path: "{{ app_root }}/index.html"
         state: absent
 
-    - name: "10. Ép khởi động lại PHP-FPM để nạp Driver mới"
-      # Đảm bảo PHP-FPM nhận cấu hình mới ngay lập tức
+    - name: "9. Đảm bảo PHP-FPM đã được bật và khởi chạy cùng hệ thống"
       service:
         name: "php{{ php_version }}-fpm"
-        state: restarted
+        state: started
         enabled: yes
 
-    - name: "5. Đảm bảo Nginx và PHP-FPM luôn chạy với cấu hình mới"
+    - name: "10. Restart Nginx và PHP-FPM để nạp cấu hình mới"
       service:
         name: "{{ item }}"
-        state: restarted # Ép restart thay vì chỉ started để nạp Driver MongoDB
+        state: restarted
         enabled: yes
       loop:
         - "php{{ php_version }}-fpm"
         - nginx
 
+    - name: "Apply PHP-FPM systemd override"
+      meta: flush_handlers
+
+    - name: "Verify MongoDB PHP extension is loaded"
+      shell: "LD_PRELOAD={{ php_libresolv_path }} php -m | grep -i '^mongodb$'"
+      register: mongodb_php_loaded
+      changed_when: false
+      failed_when: mongodb_php_loaded.rc != 0
+
   handlers:
+    - name: "Reload systemd"
+      systemd:
+        daemon_reload: yes
+
     - name: "Restart Nginx"
       service:
         name: nginx

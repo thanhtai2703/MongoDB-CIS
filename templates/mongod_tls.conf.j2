@@ -11,6 +11,7 @@ net:
     mode: requireTLS
     certificateKeyFile: "{{ mongodb_tls_dir }}/{{ inventory_hostname }}.pem"
     CAFile: "{{ mongodb_tls_dir }}/mongoCA.crt"
+    allowConnectionsWithoutCertificates: true
     disabledProtocols: TLS1_0,TLS1_1
 replication:
   replSetName: "{{ replica_set_name }}"
