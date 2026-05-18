@@ -173,28 +173,64 @@ def add_result(
     )
 
 
+def check_secret_file(path: str | None, max_mode: int) -> tuple[bool, dict[str, Any]]:
+    info = file_info(path)
+    if not path:
+        return False, info
+    ok = (
+        info.get("exists") is True
+        and info.get("owner") == "mongodb"
+        and int(info.get("mode_int", 0)) <= max_mode
+    )
+    return ok, info
+
+
 def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
     key_file = get_path(conf, "security", "keyFile")
-    key_info = file_info(key_file)
-    key_ok = (
-        bool(key_file)
-        and key_info.get("exists") is True
-        and key_info.get("owner") == "mongodb"
-        and int(key_info.get("mode_int", 0)) <= 0o600
+    cert_key_file = (
+        get_path(conf, "net", "tls", "certificateKeyFile")
+        or get_path(conf, "net", "ssl", "PEMKeyFile")
     )
+    ca_file = (
+        get_path(conf, "net", "tls", "CAFile")
+        or get_path(conf, "net", "ssl", "CAFile")
+    )
+
+    key_ok, key_info = check_secret_file(key_file, 0o600)
+    cert_ok, cert_info = check_secret_file(cert_key_file, 0o600)
+    ca_ok, ca_info = check_secret_file(ca_file, 0o644)
+
+    configured_files = [
+        ("security.keyFile", key_file, key_ok, key_info, "<= 0600"),
+        ("net.tls.certificateKeyFile", cert_key_file, cert_ok, cert_info, "<= 0600"),
+        ("net.tls.CAFile", ca_file, ca_ok, ca_info, "<= 0644"),
+    ]
+
+    file_evidence = [
+        {
+            "setting": setting,
+            "path": path,
+            "info": info,
+            "ok": ok,
+            "expected_mode": expected,
+        }
+        for setting, path, ok, info, expected in configured_files
+    ]
+
+    present_files = [item for item in file_evidence if item["path"]]
+    overall_ok = bool(present_files) and all(item["ok"] for item in present_files)
 
     add_result(
         results,
         "7.1",
         "Ensure appropriate key file permissions are set",
         "Automated",
-        "PASS" if key_ok else "FAIL",
-        "security.keyFile exists, is owned by mongodb, and is not more permissive than 0600",
-        key_info,
+        "PASS" if overall_ok else "FAIL",
+        "security.keyFile, net.tls.certificateKeyFile (mode<=0600) and net.tls.CAFile (mode<=0644) are owned by mongodb and not more permissive than required",
+        file_evidence,
         {
-            "security.keyFile": key_file,
             "config": config_path,
             "config_error": conf_error,
         },

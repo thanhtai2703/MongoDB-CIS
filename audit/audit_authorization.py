@@ -242,8 +242,8 @@ def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
             status = "FAIL"
             actual = risky_users
     else:
-        status = "MANUAL"
-        actual = "Unable to query users automatically"
+        status = "FAIL"
+        actual = "Unable to query users automatically (mongosh failed)"
 
     add_result(
         results,
@@ -265,23 +265,127 @@ def check_3_2_rbac_enabled(
     conf: dict[str, Any],
     conf_error: str | None,
     config_path: str,
+    port: int,
 ) -> None:
     authorization = get_path(conf, "security", "authorization")
     auth_enabled = str(authorization).lower() == "enabled"
+
+    if not auth_enabled:
+        add_result(
+            results,
+            "3.2",
+            "Ensure that role-based access control is enabled and configured appropriately",
+            "Manual",
+            "FAIL",
+            "RBAC is enabled (security.authorization=enabled) before reviewing roles",
+            {"authorization": authorization},
+            {"config": config_path, "config_error": conf_error},
+        )
+        return
+
+    allowed_admin_users = {
+        user.strip()
+        for user in os.environ.get("MONGO_AUDIT_ALLOWED_ADMIN_USERS", "").split(",")
+        if user.strip()
+    }
+    privileged_roles = {
+        "root",
+        "dbOwner",
+        "userAdmin",
+        "userAdminAnyDatabase",
+        "dbAdminAnyDatabase",
+        "readWriteAnyDatabase",
+        "clusterAdmin",
+        "hostManager",
+        "backup",
+        "restore",
+    }
+
+    users_query = mongosh_eval(
+        'JSON.stringify(db.getSiblingDB("admin").system.users.find('
+        '{}, {user:1, db:1, roles:1, _id:0}).toArray())',
+        port,
+    )
+
+    evidence: Any = {
+        "config": config_path,
+        "config_error": conf_error,
+        "query": users_query,
+        "allowed_admin_users": sorted(allowed_admin_users),
+        "privileged_roles_checked": sorted(privileged_roles),
+    }
+
+    if users_query["rc"] != 0:
+        add_result(
+            results,
+            "3.2",
+            "Ensure that role-based access control is enabled and configured appropriately",
+            "Manual",
+            "FAIL",
+            "Each user has roles assigned, and only allowed admin users hold privileged roles",
+            "Unable to enumerate users (mongosh failed)",
+            evidence,
+        )
+        return
+
+    try:
+        users_list = json.loads(users_query["stdout"] or "[]")
+    except json.JSONDecodeError:
+        evidence["stdout_parse_error"] = users_query["stdout"]
+        users_list = []
+
+    violations: list[dict[str, Any]] = []
+    user_summaries: list[dict[str, Any]] = []
+
+    for user in users_list:
+        if not isinstance(user, dict):
+            continue
+        username = str(user.get("user", ""))
+        user_roles = [
+            {"role": r.get("role"), "db": r.get("db")}
+            for r in (user.get("roles") or [])
+            if isinstance(r, dict)
+        ]
+        user_summaries.append(
+            {"user": username, "auth_db": str(user.get("db", "")), "roles": user_roles}
+        )
+
+        if not user_roles:
+            violations.append({"user": username, "issue": "no roles assigned", "roles": []})
+            continue
+
+        if username in allowed_admin_users:
+            continue
+
+        bad_roles = [
+            r for r in user_roles if str(r.get("role")) in privileged_roles
+        ]
+        if bad_roles:
+            violations.append(
+                {
+                    "user": username,
+                    "issue": "non-allowed user holds privileged role",
+                    "roles": bad_roles,
+                }
+            )
+
+    status = "PASS" if not violations else "FAIL"
+    actual: Any = {
+        "authorization": authorization,
+        "user_count": len(user_summaries),
+        "violations": violations,
+        "users": user_summaries,
+    }
 
     add_result(
         results,
         "3.2",
         "Ensure that role-based access control is enabled and configured appropriately",
         "Manual",
-        "MANUAL" if auth_enabled else "FAIL",
-        "RBAC is enabled and roles are reviewed against application needs",
-        {"authorization": authorization},
-        {
-            "config": config_path,
-            "config_error": conf_error,
-            "note": "Role suitability still requires manual review.",
-        },
+        status,
+        "All users have at least one role and only allowed admins hold privileged roles",
+        actual,
+        evidence,
     )
 
 
@@ -374,15 +478,20 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
     custom_roles_result = mongosh_eval(
         """
         const customRoles = [];
-        const adminDb = db.getSiblingDB("admin");
-        const adminRoles = adminDb.runCommand({
-          rolesInfo: 1,
-          showPrivileges: true,
-          showBuiltinRoles: false
-        });
-        if (adminRoles.ok === 1 && Array.isArray(adminRoles.roles)) {
-          adminRoles.roles.forEach(function(role) {
-            customRoles.push(role);
+        const dbList = db.adminCommand({ listDatabases: 1 });
+        if (dbList.ok === 1 && Array.isArray(dbList.databases)) {
+          dbList.databases.forEach(function(dbInfo) {
+            const targetDb = db.getSiblingDB(dbInfo.name);
+            const rolesResult = targetDb.runCommand({
+              rolesInfo: 1,
+              showPrivileges: true,
+              showBuiltinRoles: false
+            });
+            if (rolesResult.ok === 1 && Array.isArray(rolesResult.roles)) {
+              rolesResult.roles.forEach(function(role) {
+                customRoles.push(role);
+              });
+            }
           });
         }
         JSON.stringify(customRoles);
@@ -390,7 +499,7 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
         port,
     )
 
-    status = "MANUAL"
+    status = "FAIL"
     actual: Any = "Unable to query custom roles automatically"
     evidence: Any = {
         "cmd": custom_roles_result["cmd"],
@@ -425,15 +534,23 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
             }
         )
 
-        if not role_summaries:
-            status = "PASS"
-            actual = "No custom roles found"
-        elif dangerous_roles:
+        if dangerous_roles:
             status = "FAIL"
-            actual = dangerous_roles
+            actual = {
+                "dangerous_role_count": len(dangerous_roles),
+                "dangerous_roles": dangerous_roles,
+            }
         else:
-            status = "MANUAL"
-            actual = role_summaries
+            status = "PASS"
+            actual = (
+                "No custom roles found"
+                if not role_summaries
+                else {
+                    "custom_role_count": len(role_summaries),
+                    "custom_roles": role_summaries,
+                    "note": "All custom roles are scoped (no anyResource, no inherited root/dbOwner).",
+                }
+            )
 
     add_result(
         results,
@@ -452,7 +569,7 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
     port = int(get_path(conf, "net", "port", default=DEFAULT_MONGO_PORT) or DEFAULT_MONGO_PORT)
 
     check_3_1_least_privilege(results, port)
-    check_3_2_rbac_enabled(results, conf, conf_error, config_path)
+    check_3_2_rbac_enabled(results, conf, conf_error, config_path, port)
     check_3_3_non_root_service_user(results)
     check_3_4_role_privileges_review(results, port)
 

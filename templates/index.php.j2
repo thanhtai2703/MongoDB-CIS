@@ -6,12 +6,6 @@ $MONGO_PASS = "{{ mongodb_app_pass | default('') }}";
 $MONGO_TLS = {% if mongodb_app_tls | default(false) | bool %}true{% else %}false{% endif %};
 $MONGO_TLS_CA_FILE = "{{ mongodb_tls_ca_file | default('/etc/ssl/mongodb/mongoCA.crt') }}";
 $REPLICA_SET = "{{ replica_set_name | default('rs0') }}";
-$LOGIN_ENFORCED = {% if web_login_enforced | default(false) | bool %}true{% else %}false{% endif %};
-$LOGIN_USER = "{{ web_login_user | default('app_writer') }}";
-$LOGIN_PASS = "{{ web_login_pass | default('WriterPass123!') }}";
-$LOGIN_COOKIE = 'cis_demo_login';
-$LOGIN_COOKIE_SIG = 'cis_demo_login_sig';
-$LOGIN_SECRET = hash('sha256', __FILE__ . '|' . $LOGIN_USER);
 
 $baseUri = $MONGO_USER !== ''
     ? sprintf("mongodb://%s:%s@%s", rawurlencode($MONGO_USER), rawurlencode($MONGO_PASS), $DB_IPS)
@@ -41,45 +35,9 @@ $write_error = null;
 $manager = null;
 $users = [];
 $created = $_GET['created'] ?? '';
-$cluster = ['ok' => false, 'primary' => '-', 'setName' => $REPLICA_SET, 'hosts' => []];
 
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
-}
-
-function login_sig($username, $secret) {
-    return hash_hmac('sha256', $username, $secret);
-}
-
-$login_error = null;
-$logged_user = $_COOKIE[$LOGIN_COOKIE] ?? '';
-$logged_sig = $_COOKIE[$LOGIN_COOKIE_SIG] ?? '';
-$is_logged_in = $logged_user !== '' && hash_equals(login_sig($logged_user, $LOGIN_SECRET), $logged_sig);
-
-if (isset($_GET['logout'])) {
-    setcookie($LOGIN_COOKIE, '', time() - 3600, '/');
-    setcookie($LOGIN_COOKIE_SIG, '', time() - 3600, '/');
-    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
-    $candidate_user = trim($_POST['login_user'] ?? '');
-    $candidate_pass = $_POST['login_pass'] ?? '';
-    $login_ok = $LOGIN_ENFORCED
-        ? ($candidate_user === $LOGIN_USER && $candidate_pass === $LOGIN_PASS)
-        : ($candidate_user !== '');
-
-    if ($login_ok) {
-        setcookie($LOGIN_COOKIE, $candidate_user, 0, '/');
-        setcookie($LOGIN_COOKIE_SIG, login_sig($candidate_user, $LOGIN_SECRET), 0, '/');
-        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
-        exit;
-    }
-
-    $login_error = $LOGIN_ENFORCED
-        ? 'Sai tài khoản hoặc mật khẩu.'
-        : 'Nhập một username bất kỳ để đăng nhập.';
 }
 
 if (!extension_loaded('mongodb')) {
@@ -94,14 +52,8 @@ if (!extension_loaded('mongodb')) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_user' && $manager) {
     try {
-        if (!$is_logged_in) {
-            throw new RuntimeException('Bạn cần đăng nhập trước khi tạo user.');
-        }
-
         $username = trim($_POST['username'] ?? '');
         $email = trim($_POST['email'] ?? '');
-        $role = $_POST['role'] ?? 'app_reader';
-        $password = $_POST['password'] ?? '';
 
         if ($username === '') {
             throw new RuntimeException('Username is required.');
@@ -111,22 +63,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         $bulk->insert([
             'username' => $username,
             'email' => $email,
-            'role' => in_array($role, ['app_reader', 'app_writer', 'app_admin'], true) ? $role : 'app_reader',
-            'password_hash' => $password !== '' ? password_hash($password, PASSWORD_BCRYPT) : 'unset',
-            'created_by_web' => true,
             'created_at' => new MongoDB\BSON\UTCDateTime(),
         ]);
         $manager->executeBulkWrite("$DB_NAME.users", $bulk);
-
-        $audit = new MongoDB\Driver\BulkWrite;
-        $audit->insert([
-            'user' => $logged_user,
-            'action' => 'WEB_USER_CREATE',
-            'target' => "users/$username",
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-            'ts' => new MongoDB\BSON\UTCDateTime(),
-        ]);
-        $manager->executeBulkWrite("$DB_NAME.audit_log", $audit);
 
         header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?') . '?created=1');
         exit;
@@ -137,16 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
 
 if ($manager) {
     try {
-        $hello = new MongoDB\Driver\Command(['hello' => 1]);
-        $res = $manager->executeCommand('admin', $hello)->toArray()[0];
-        $cluster = [
-            'ok' => true,
-            'primary' => $res->primary ?? '-',
-            'setName' => $res->setName ?? 'rs0',
-            'hosts' => $res->hosts ?? [],
-        ];
-
-        $query = new MongoDB\Driver\Query([], ['sort' => ['created_at' => -1], 'limit' => 30]);
+        $query = new MongoDB\Driver\Query([], ['sort' => ['created_at' => -1], 'limit' => 20]);
         $users = iterator_to_array($manager->executeQuery("$DB_NAME.users", $query), false);
     } catch (Throwable $e) {
         $conn_error = $e->getMessage();
@@ -164,23 +94,17 @@ function fmt_date($value) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>MongoDB CIS Web Workload</title>
+    <title>MongoDB Demo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #f5f7fb; }
-        .page { max-width: 1100px; }
-        .status-dot { width: .65rem; height: .65rem; display: inline-block; border-radius: 999px; margin-right: .4rem; }
-        .status-ok { background: #198754; }
-        .status-bad { background: #dc3545; }
-        .metric { border-left: 4px solid #0d6efd; }
-        .table th { color: #6c757d; font-size: .82rem; text-transform: uppercase; }
+        .page { max-width: 800px; }
     </style>
 </head>
 <body>
 <nav class="navbar navbar-dark bg-dark">
     <div class="container page">
-        <span class="navbar-brand">MongoDB CIS Web Workload</span>
-        <span class="text-light small">Users collection demo</span>
+        <span class="navbar-brand">MongoDB Demo</span>
     </div>
 </nav>
 
@@ -193,126 +117,35 @@ function fmt_date($value) {
 
     <?php if ($write_error): ?>
         <div class="alert alert-danger">
-            <strong>Không tạo được user:</strong> <?= h($write_error) ?>
+            <strong>Không ghi được dữ liệu:</strong> <?= h($write_error) ?>
         </div>
     <?php elseif ($created): ?>
-        <div class="alert alert-success">Tạo user thành công. Workload vẫn ghi được dữ liệu.</div>
+        <div class="alert alert-success">Đã ghi dữ liệu thành công.</div>
     <?php endif; ?>
-
-    <section class="row g-3 mb-4">
-        <div class="col-md-3">
-            <div class="card metric h-100">
-                <div class="card-body">
-                    <div class="text-muted small">MongoDB</div>
-                    <div class="h5 mb-0">
-                        <span class="status-dot <?= $cluster['ok'] ? 'status-ok' : 'status-bad' ?>"></span>
-                        <?= $cluster['ok'] ? 'Connected' : 'Disconnected' ?>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card metric h-100">
-                <div class="card-body">
-                    <div class="text-muted small">Authentication</div>
-                    <div class="h5 mb-0"><?= $MONGO_USER ? 'auth: ' . h($MONGO_USER) : 'no auth' ?></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card metric h-100">
-                <div class="card-body">
-                    <div class="text-muted small">Transport</div>
-                    <div class="h5 mb-0"><?= $MONGO_TLS ? 'TLS enabled' : 'plain TCP' ?></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card metric h-100">
-                <div class="card-body">
-                    <div class="text-muted small">Users loaded</div>
-                    <div class="h5 mb-0"><?= count($users) ?></div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="card mb-4">
-        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <strong>Application login</strong>
-            <span class="badge <?= $LOGIN_ENFORCED ? 'text-bg-success' : 'text-bg-warning' ?>">
-                <?= $LOGIN_ENFORCED ? 'RBAC enforced' : 'Before remediation: any login accepted' ?>
-            </span>
-        </div>
-        <div class="card-body">
-            <?php if ($login_error): ?>
-                <div class="alert alert-danger"><?= h($login_error) ?></div>
-            <?php endif; ?>
-
-            <?php if ($is_logged_in): ?>
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        Signed in as <strong><?= h($logged_user) ?></strong>.
-                        <?php if ($LOGIN_ENFORCED): ?>
-                            <span class="text-muted">Only the configured application account can modify data.</span>
-                        <?php else: ?>
-                            <span class="text-muted">Before remediation mode accepts any username.</span>
-                        <?php endif; ?>
-                    </div>
-                    <a class="btn btn-outline-secondary btn-sm" href="?logout=1">Logout</a>
-                </div>
-            <?php else: ?>
-                <form method="POST" class="row g-2">
-                    <input type="hidden" name="action" value="login">
-                    <div class="col-md-4">
-                        <input class="form-control" name="login_user" placeholder="<?= $LOGIN_ENFORCED ? 'app_writer' : 'any username' ?>" required>
-                    </div>
-                    <div class="col-md-4">
-                        <input class="form-control" type="password" name="login_pass" placeholder="<?= $LOGIN_ENFORCED ? 'WriterPass123!' : 'any password' ?>">
-                    </div>
-                    <div class="col-md-4">
-                        <button class="btn btn-dark w-100">Login</button>
-                    </div>
-                </form>
-            <?php endif; ?>
-        </div>
-    </section>
 
     <section class="card mb-4">
         <div class="card-header bg-white">
-            <strong>Create user</strong>
-            <span class="text-muted small ms-2">Dùng cùng thao tác này trước và sau remediation.</span>
+            <strong>Ghi dữ liệu vào MongoDB</strong>
         </div>
         <div class="card-body">
             <form method="POST" class="row g-2">
                 <input type="hidden" name="action" value="create_user">
-                <div class="col-md-2">
-                    <input class="form-control" name="username" placeholder="username" required <?= $is_logged_in ? '' : 'disabled' ?>>
+                <div class="col-md-5">
+                    <input class="form-control" name="username" placeholder="username" required>
                 </div>
-                <div class="col-md-3">
-                    <input class="form-control" type="email" name="email" placeholder="email" <?= $is_logged_in ? '' : 'disabled' ?>>
-                </div>
-                <div class="col-md-3">
-                    <input class="form-control" type="password" name="password" placeholder="password" <?= $is_logged_in ? '' : 'disabled' ?>>
+                <div class="col-md-5">
+                    <input class="form-control" type="email" name="email" placeholder="email">
                 </div>
                 <div class="col-md-2">
-                    <select class="form-select" name="role" <?= $is_logged_in ? '' : 'disabled' ?>>
-                        <option value="app_reader">app_reader</option>
-                        <option value="app_writer">app_writer</option>
-                        <option value="app_admin">app_admin</option>
-                    </select>
-                </div>
-                <div class="col-md-2">
-                    <button class="btn btn-primary w-100" <?= $is_logged_in ? '' : 'disabled' ?>>Create</button>
+                    <button class="btn btn-primary w-100">Ghi</button>
                 </div>
             </form>
         </div>
     </section>
 
     <section class="card">
-        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <strong>Users collection</strong>
-            <span class="text-muted small">Replica set: <?= h($cluster['setName']) ?> · Primary: <?= h($cluster['primary']) ?></span>
+        <div class="card-header bg-white">
+            <strong>Dữ liệu trong collection <?= h($DB_NAME) ?>.users</strong>
         </div>
         <div class="table-responsive">
             <table class="table table-hover mb-0">
@@ -320,8 +153,6 @@ function fmt_date($value) {
                     <tr>
                         <th>Username</th>
                         <th>Email</th>
-                        <th>Role</th>
-                        <th>Password state</th>
                         <th>Created</th>
                     </tr>
                 </thead>
@@ -330,21 +161,11 @@ function fmt_date($value) {
                     <tr>
                         <td><strong><?= h($user->username ?? '') ?></strong></td>
                         <td><?= h($user->email ?? '') ?></td>
-                        <td><span class="badge text-bg-secondary"><?= h($user->role ?? '-') ?></span></td>
-                        <td>
-                            <?php if (!empty($user->password_plain)): ?>
-                                <span class="badge text-bg-danger">PLAIN</span>
-                            <?php elseif (!empty($user->password_hash)): ?>
-                                <span class="badge text-bg-success">hashed</span>
-                            <?php else: ?>
-                                <span class="text-muted">unset</span>
-                            <?php endif; ?>
-                        </td>
                         <td><?= fmt_date($user->created_at ?? null) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$users): ?>
-                    <tr><td colspan="5" class="text-muted text-center py-4">Chưa đọc được dữ liệu users.</td></tr>
+                    <tr><td colspan="3" class="text-muted text-center py-4">Chưa có dữ liệu.</td></tr>
                 <?php endif; ?>
                 </tbody>
             </table>

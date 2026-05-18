@@ -18,18 +18,30 @@
     dangerous_custom_role_names: []
 
   tasks:
+    - name: "Auto-detect whether mongod is configured for TLS"
+      shell: "grep -qE '^[[:space:]]*mode:[[:space:]]*requireTLS' /etc/mongod.conf && echo true || echo false"
+      register: mongod_tls_detect
+      changed_when: false
+
+    - name: "Resolve effective TLS mode (mongod.conf is the source of truth)"
+      set_fact:
+        mongo_audit_tls_effective: "{{ mongod_tls_detect.stdout | trim }}"
+        mongo_audit_tls_allow_invalid_hostnames_effective: "true"
+
+    - name: "Show resolved TLS mode for connection"
+      debug:
+        msg: "mongod reports TLS={{ mongo_audit_tls_effective }} -> connecting with TLS={{ mongo_audit_tls_effective }}"
+
     - name: "Build MongoDB connection arguments"
       set_fact:
         mongo_connection_args: >-
-          --host {{ ansible_host if (mongo_audit_tls | bool) else '127.0.0.1' }}
+          --host {{ ansible_host if (mongo_audit_tls_effective | bool) else '127.0.0.1' }}
           --port {{ mongo_port }}
-          {% if mongo_audit_tls | bool -%}
+          {% if mongo_audit_tls_effective | bool -%}
           --tls
           --tlsCAFile {{ mongo_audit_tls_ca_file }}
           --tlsCertificateKeyFile {{ mongo_audit_tls_cert_key_file }}
-          {% if mongo_audit_tls_allow_invalid_hostnames | bool -%}
           --tlsAllowInvalidHostnames
-          {%- endif %}
           {%- endif %}
 
     - name: "Remove broad roles from MongoAudit"
