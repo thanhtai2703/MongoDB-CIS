@@ -44,6 +44,20 @@
           --tlsAllowInvalidHostnames
           {%- endif %}
 
+    - name: "Wait until this node is the writable primary"
+      shell: >-
+        mongosh --quiet {{ mongo_connection_args }}
+        --username "{{ mongo_admin_user }}"
+        --password "{{ mongo_admin_pass }}"
+        --authenticationDatabase "{{ mongo_auth_db }}"
+        --eval "db.hello().isWritablePrimary"
+        | tail -n1
+      register: primary_check
+      until: primary_check.stdout | trim == 'true'
+      retries: 24
+      delay: 5
+      changed_when: false
+
     - name: "Remove broad roles from MongoAudit"
       shell: |
         mongosh --quiet {{ mongo_connection_args }} \
