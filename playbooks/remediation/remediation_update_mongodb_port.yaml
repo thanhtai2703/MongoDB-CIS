@@ -1,60 +1,109 @@
 ---
-- name: "Cập nhật Port MongoDB"
-  hosts: all
+# Migrate MongoDB port from default 27017 to mongodb_port_new (default 27018).
+#
+# QUAN TRỌNG: Playbook render lại /etc/mongod.conf bằng templates/mongod.conf.j2
+# (plain, KHÔNG có auth/TLS). Phải chạy TRƯỚC remediate_auth/tls, không chạy sau.
+#
+# Sau khi chạy thành công, biến `mongodb_port` trong group_vars/all.yaml sẽ được
+# cập nhật → các playbook tiếp theo (remediate_*, audit, web) tự dùng port mới.
+
+- name: "Migrate MongoDB to non-default port"
+  hosts: database_nodes
   become: yes
+  gather_facts: no
   vars:
-    replica_set_name: "rs0"
-    php_version: "8.1"
-    mongodb_port: 27018
-    mongodb_db: "demo"
-    mongodb_collection: "messages"
+    mongodb_port_new: 27018
 
   tasks:
-    - name: "Cập nhật file cấu hình mongod.conf"
+    - name: "Render mongod.conf with new port"
       template:
-        src: templates/mongod.conf.j2
+        src: ../../templates/mongod.conf.j2
         dest: /etc/mongod.conf
-      when: "'database_nodes' in group_names or inventory_hostname == 'db-node-backup'"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        mongodb_port: "{{ mongodb_port_new }}"
       notify: "Restart MongoDB"
 
-    - name: "Ép chạy handler để khởi động lại MongoDB ngay lập tức"
+    - name: "Apply restart immediately"
       meta: flush_handlers
 
-    - name: "Đợi MongoDB sẵn sàng trên cổng mới"
+    - name: "Wait for MongoDB to listen on new port"
       wait_for:
-        port: "{{ mongodb_port }}"
+        host: "{{ ansible_host }}"
+        port: "{{ mongodb_port_new }}"
         timeout: 60
-      when: "'database_nodes' in group_names or inventory_hostname == 'db-node-backup'"
 
-    - name: "Ép cụm nhận diện Port mới (rs.reconfig)"
+    - name: "Reconfigure replica set members to new port"
       shell: |
-        mongosh --port {{ mongodb_port }} --eval '
-          var cfg = rs.conf();
-          cfg.members[0].host = "{{ hostvars["db-node-1"].ansible_host }}:{{ mongodb_port }}";
-          cfg.members[1].host = "{{ hostvars["db-node-2"].ansible_host }}:{{ mongodb_port }}";
-          cfg.members[2].host = "{{ hostvars["db-node-backup"].ansible_host }}:{{ mongodb_port }}";
-          rs.reconfig(cfg, {force: true});
+        mongosh --port {{ mongodb_port_new }} --quiet --eval '
+        var cfg = rs.conf();
+        cfg.members.forEach(function(m) {
+          m.host = m.host.replace(/:[0-9]+$/, ":{{ mongodb_port_new }}");
+        });
+        rs.reconfig(cfg, {force: true});
+        print("reconfig_done");
         '
-      when: inventory_hostname == 'db-node-1'
-      ignore_errors: yes
+      when: inventory_hostname == groups['database_nodes'][0]
+      register: reconfig_result
+      retries: 12
+      delay: 5
+      until: reconfig_result.rc == 0 and 'reconfig_done' in reconfig_result.stdout
+      changed_when: "'reconfig_done' in reconfig_result.stdout"
 
-    - name: "Cập nhật lại index.php cho các Web"
-      template:
-        src: templates/index.php.j2
-        dest: "/var/www/html/index.php"
-        owner: www-data
-        group: www-data
-        mode: "0644"
-      when: "'web_servers' in group_names"
+    - name: "Wait until primary is writable on new port"
+      shell: >
+        mongosh --port {{ mongodb_port_new }} --quiet
+        --eval "db.hello().isWritablePrimary" | tail -n1
+      register: primary_check
+      until: primary_check.stdout | trim == 'true'
+      retries: 24
+      delay: 5
+      when: inventory_hostname == groups['database_nodes'][0]
+      changed_when: false
 
-    - name: "Khởi động lại PHP-FPM để áp dụng kết nối mới"
-      service:
-        name: "php{{ php_version }}-fpm"
-        state: restarted
-      when: "'web_servers' in group_names"
+    - name: "Persist new port to group_vars/all.yaml on controller"
+      lineinfile:
+        path: "{{ playbook_dir }}/../../group_vars/all.yaml"
+        regexp: '^mongodb_port:'
+        line: "mongodb_port: {{ mongodb_port_new }}"
+      delegate_to: localhost
+      become: no
+      run_once: yes
 
   handlers:
     - name: "Restart MongoDB"
       service:
         name: mongod
+        state: restarted
+
+
+- name: "Update web servers with new MongoDB port"
+  hosts: web_servers
+  become: yes
+  gather_facts: no
+  vars:
+    mongodb_port_new: 27018
+    mongodb_port: "{{ mongodb_port_new }}"
+    mongodb_db: "demo"
+    php_version: "8.1"
+
+  tasks:
+    - name: "Re-render index.php with new port"
+      template:
+        src: ../../templates/index.php.j2
+        dest: /var/www/html/index.php
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      notify: "Restart PHP-FPM"
+
+    - name: "Apply PHP-FPM restart"
+      meta: flush_handlers
+
+  handlers:
+    - name: "Restart PHP-FPM"
+      service:
+        name: "php{{ php_version }}-fpm"
         state: restarted

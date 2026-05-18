@@ -9,7 +9,7 @@
     mongo_audit_user: "MongoAudit"
     mongo_audit_pass: "AuditPass123!"
     mongo_auth_db: "admin"
-    mongo_port: 27017
+    mongo_port: "{{ mongodb_port | default(27017) }}"
     mongo_audit_tls: "false"
     mongo_audit_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
     mongo_audit_tls_cert_key_file: "/etc/ssl/mongodb/{{ inventory_hostname }}.pem"

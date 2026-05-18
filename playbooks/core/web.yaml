@@ -23,7 +23,7 @@
       shell: >-
         timeout 5 bash -c
         'echo | openssl s_client
-        -connect {{ hostvars[groups["database_nodes"][0]].ansible_host }}:27017
+        -connect {{ hostvars[groups["database_nodes"][0]].ansible_host }}:{{ mongodb_port }}
         2>&1
         | grep -qE "(BEGIN CERTIFICATE|SSL-Session|Server certificate)"
         && echo tls || echo plain'
@@ -37,7 +37,7 @@
         that:
           - (mongo_tls_probe.stdout == 'tls') == (mongodb_app_tls | bool)
         fail_msg: >-
-          MongoDB at {{ hostvars[groups['database_nodes'][0]].ansible_host }}:27017
+          MongoDB at {{ hostvars[groups['database_nodes'][0]].ansible_host }}:{{ mongodb_port }}
           reports TLS={{ mongo_tls_probe.stdout }} but mongodb_app_tls={{ mongodb_app_tls }}.
           Re-run with -e mongodb_app_tls={{ 'true' if mongo_tls_probe.stdout == 'tls' else 'false' }}
           (and matching mongodb_app_user/mongodb_app_pass if auth is enabled).
@@ -155,7 +155,7 @@
     - name: "Verify MongoDB TLS endpoint trusts the installed CA"
       shell: >-
         openssl s_client
-        -connect {{ hostvars[groups['database_nodes'][0]].ansible_host }}:27017
+        -connect {{ hostvars[groups['database_nodes'][0]].ansible_host }}:{{ mongodb_port }}
         -CAfile {{ mongodb_tls_ca_file }}
         -verify_return_error
         -servername {{ groups['database_nodes'][0] }}

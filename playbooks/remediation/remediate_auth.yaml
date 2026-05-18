@@ -108,7 +108,7 @@
     - name: "Wait for MongoDB port after auth remediation"
       wait_for:
         host: "{{ ansible_host }}"
-        port: 27017
+        port: "{{ mongodb_port }}"
         timeout: 60
 
   handlers:

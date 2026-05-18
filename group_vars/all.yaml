@@ -5,5 +5,5 @@
 # MongoDB
 mongodb_version: "8.0"
 mongo_version: "8.0"
-replica_set_"name: "rs0"
+replica_set_name: "rs0"
 mongodb_port: 27017
