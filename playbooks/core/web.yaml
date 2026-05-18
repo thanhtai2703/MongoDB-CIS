@@ -16,18 +16,23 @@
     web_login_pass: "WriterPass123!"
 
   tasks:
-    - name: "Pre-flight: detect whether MongoDB requires TLS"
+    - name: "Pre-flight: ensure openssl is installed for TLS probe"
+      apt:
+        name: openssl
+        state: present
+      run_once: yes
+
+    - name: "Pre-flight: detect whether MongoDB requires TLS (from web host)"
       shell: >-
         timeout 5 bash -c
         'echo | openssl s_client
         -connect {{ hostvars[groups["database_nodes"][0]].ansible_host }}:27017
-        -verify_return_error 2>&1
-        | grep -q "BEGIN CERTIFICATE" && echo tls || echo plain'
+        2>&1
+        | grep -qE "(BEGIN CERTIFICATE|SSL-Session|Server certificate)"
+        && echo tls || echo plain'
       register: mongo_tls_probe
       changed_when: false
       failed_when: false
-      delegate_to: localhost
-      become: no
       run_once: yes
 
     - name: "Pre-flight: assert mongodb_app_tls matches server state"
@@ -39,7 +44,7 @@
           reports TLS={{ mongo_tls_probe.stdout }} but mongodb_app_tls={{ mongodb_app_tls }}.
           Re-run with -e mongodb_app_tls={{ 'true' if mongo_tls_probe.stdout == 'tls' else 'false' }}
           (and matching mongodb_app_user/mongodb_app_pass if auth is enabled).
-        success_msg: "Client TLS setting matches MongoDB server state."
+        success_msg: "Client TLS setting matches MongoDB server state ({{ mongo_tls_probe.stdout }})."
       run_once: yes
 
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
