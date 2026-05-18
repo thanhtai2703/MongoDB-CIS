@@ -10,13 +10,16 @@
     mongodb_app_tls: false
     mongodb_tls_local_ca_file: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}/mongoCA.crt"
     mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
+    php_libresolv_path: "/lib/x86_64-linux-gnu/libresolv.so.2"
 
   tasks:
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
       apt:
         name:
           - nginx
+          - "php{{ php_version }}-cli"
           - "php{{ php_version }}-fpm"
+          - "php{{ php_version }}-mongodb"
           - php-mongodb
           - libcurl4-openssl-dev
           - pkg-config
@@ -41,6 +44,32 @@
         - fpm
         - cli
       notify: "Restart PHP-FPM"
+
+    - name: "Enable MongoDB PHP module"
+      command: "phpenmod -v {{ php_version }} mongodb"
+      changed_when: false
+      notify: "Restart PHP-FPM"
+
+    - name: "Create PHP-FPM systemd override directory"
+      file:
+        path: "/etc/systemd/system/php{{ php_version }}-fpm.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Preload libresolv for PHP-FPM mongodb extension"
+      copy:
+        dest: "/etc/systemd/system/php{{ php_version }}-fpm.service.d/override.conf"
+        content: |
+          [Service]
+          Environment=LD_PRELOAD={{ php_libresolv_path }}
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart PHP-FPM
 
     - name: "4. Đảm bảo Nginx đã được bật và khởi chạy cùng hệ thống"
       service:
@@ -109,7 +138,20 @@
         - "php{{ php_version }}-fpm"
         - nginx
 
+    - name: "Apply PHP-FPM systemd override"
+      meta: flush_handlers
+
+    - name: "Verify MongoDB PHP extension is loaded"
+      shell: "LD_PRELOAD={{ php_libresolv_path }} php -m | grep -i '^mongodb$'"
+      register: mongodb_php_loaded
+      changed_when: false
+      failed_when: mongodb_php_loaded.rc != 0
+
   handlers:
+    - name: "Reload systemd"
+      systemd:
+        daemon_reload: yes
+
     - name: "Restart Nginx"
       service:
         name: nginx

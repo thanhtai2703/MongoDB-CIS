@@ -23,7 +23,11 @@ if ($MONGO_USER !== '') {
     $uri = "mongodb://$DB_IPS";
 }
 
-$uriOptions = ['replicaSet' => 'rs0'];
+$uriOptions = [
+    'replicaSet' => 'rs0',
+    'serverSelectionTimeoutMS' => 15000,
+    'connectTimeoutMS' => 10000,
+];
 if ($MONGO_USER !== '') {
     $uriOptions['authSource'] = 'admin';
 }
