@@ -12,11 +12,11 @@ $LOGIN_COOKIE = 'cis_demo_login';
 $LOGIN_COOKIE_SIG = 'cis_demo_login_sig';
 $LOGIN_SECRET = hash('sha256', __FILE__ . '|' . $LOGIN_USER);
 
-$uri = $MONGO_USER !== ''
+$baseUri = $MONGO_USER !== ''
     ? sprintf("mongodb://%s:%s@%s", rawurlencode($MONGO_USER), rawurlencode($MONGO_PASS), $DB_IPS)
     : "mongodb://$DB_IPS";
 
-$uriOptions = [
+$uriQuery = [
     'replicaSet' => 'rs0',
     'serverSelectionTimeoutMS' => 5000,
     'connectTimeoutMS' => 5000,
@@ -24,14 +24,17 @@ $uriOptions = [
 ];
 
 if ($MONGO_USER !== '') {
-    $uriOptions['authSource'] = 'admin';
+    $uriQuery['authSource'] = 'admin';
 }
 
 if ($MONGO_TLS) {
-    $uriOptions['tls'] = true;
-    $uriOptions['tlsCAFile'] = $MONGO_TLS_CA_FILE;
-    $uriOptions['tlsAllowInvalidHostnames'] = true;
+    $uriQuery['tls'] = 'true';
+    $uriQuery['ssl'] = 'true';
+    $uriQuery['tlsCAFile'] = $MONGO_TLS_CA_FILE;
+    $uriQuery['tlsAllowInvalidHostnames'] = 'true';
 }
+
+$uri = $baseUri . '?' . http_build_query($uriQuery, '', '&', PHP_QUERY_RFC3986);
 
 $conn_error = null;
 $write_error = null;
@@ -83,7 +86,7 @@ if (!extension_loaded('mongodb')) {
     $conn_error = "PHP MongoDB extension is not loaded.";
 } else {
     try {
-        $manager = new MongoDB\Driver\Manager($uri, $uriOptions);
+        $manager = new MongoDB\Driver\Manager($uri);
     } catch (Throwable $e) {
         $conn_error = $e->getMessage();
     }
