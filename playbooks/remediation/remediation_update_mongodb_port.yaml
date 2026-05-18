@@ -53,15 +53,6 @@
         state: restarted
       when: "'web_servers' in group_names"
 
-    - name: "Cập nhật script backup với Port mới"
-      template:
-        src: templates/backup_mongo.sh.j2
-        dest: /usr/local/bin/backup_mongo.sh
-        owner: root
-        group: root
-        mode: "0755"
-      when: inventory_hostname == 'db-node-backup'
-
   handlers:
     - name: "Restart MongoDB"
       service:
