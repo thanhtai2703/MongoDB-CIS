@@ -185,6 +185,18 @@ def check_secret_file(path: str | None, max_mode: int) -> tuple[bool, dict[str, 
     return ok, info
 
 
+def check_public_file(path: str | None, max_mode: int) -> tuple[bool, dict[str, Any]]:
+    info = file_info(path)
+    if not path:
+        return False, info
+    ok = (
+        info.get("exists") is True
+        and info.get("owner") in {"mongodb", "root"}
+        and int(info.get("mode_int", 0)) <= max_mode
+    )
+    return ok, info
+
+
 def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
@@ -200,12 +212,12 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
 
     key_ok, key_info = check_secret_file(key_file, 0o600)
     cert_ok, cert_info = check_secret_file(cert_key_file, 0o600)
-    ca_ok, ca_info = check_secret_file(ca_file, 0o644)
+    ca_ok, ca_info = check_public_file(ca_file, 0o644)
 
     configured_files = [
-        ("security.keyFile", key_file, key_ok, key_info, "<= 0600"),
-        ("net.tls.certificateKeyFile", cert_key_file, cert_ok, cert_info, "<= 0600"),
-        ("net.tls.CAFile", ca_file, ca_ok, ca_info, "<= 0644"),
+        ("security.keyFile", key_file, key_ok, key_info, "<= 0600, owner=mongodb"),
+        ("net.tls.certificateKeyFile", cert_key_file, cert_ok, cert_info, "<= 0600, owner=mongodb"),
+        ("net.tls.CAFile", ca_file, ca_ok, ca_info, "<= 0644, owner in {mongodb, root}"),
     ]
 
     file_evidence = [

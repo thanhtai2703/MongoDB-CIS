@@ -177,12 +177,12 @@ def mongosh_eval(script: str, port: int) -> dict[str, Any]:
 
     if tls:
         cmd.append("--tls")
-    if tls_ca_file:
-        cmd.extend(["--tlsCAFile", tls_ca_file])
-    if tls_cert_key_file:
-        cmd.extend(["--tlsCertificateKeyFile", tls_cert_key_file])
-    if tls_allow_invalid_hostnames:
-        cmd.append("--tlsAllowInvalidHostnames")
+        if tls_ca_file:
+            cmd.extend(["--tlsCAFile", tls_ca_file])
+        if tls_cert_key_file:
+            cmd.extend(["--tlsCertificateKeyFile", tls_cert_key_file])
+        if tls_allow_invalid_hostnames:
+            cmd.append("--tlsAllowInvalidHostnames")
 
     if user:
         cmd.extend(["--username", user, "--password", password, "--authenticationDatabase", auth_db])
