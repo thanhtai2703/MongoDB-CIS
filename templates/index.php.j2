@@ -5,6 +5,7 @@ $MONGO_USER = "{{ mongodb_app_user | default('') }}";
 $MONGO_PASS = "{{ mongodb_app_pass | default('') }}";
 $MONGO_TLS = {% if mongodb_app_tls | default(false) | bool %}true{% else %}false{% endif %};
 $MONGO_TLS_CA_FILE = "{{ mongodb_tls_ca_file | default('/etc/ssl/mongodb/mongoCA.crt') }}";
+$REPLICA_SET = "{{ replica_set_name | default('rs0') }}";
 $LOGIN_ENFORCED = {% if web_login_enforced | default(false) | bool %}true{% else %}false{% endif %};
 $LOGIN_USER = "{{ web_login_user | default('app_writer') }}";
 $LOGIN_PASS = "{{ web_login_pass | default('WriterPass123!') }}";
@@ -17,7 +18,7 @@ $baseUri = $MONGO_USER !== ''
     : "mongodb://$DB_IPS";
 
 $uriQuery = [
-    'replicaSet' => 'rs0',
+    'replicaSet' => $REPLICA_SET,
     'serverSelectionTimeoutMS' => 5000,
     'connectTimeoutMS' => 5000,
     'socketTimeoutMS' => 5000,
@@ -29,19 +30,18 @@ if ($MONGO_USER !== '') {
 
 if ($MONGO_TLS) {
     $uriQuery['tls'] = 'true';
-    $uriQuery['ssl'] = 'true';
     $uriQuery['tlsCAFile'] = $MONGO_TLS_CA_FILE;
     $uriQuery['tlsAllowInvalidHostnames'] = 'true';
 }
 
-$uri = $baseUri . '?' . http_build_query($uriQuery, '', '&', PHP_QUERY_RFC3986);
+$uri = $baseUri . '/?' . http_build_query($uriQuery, '', '&', PHP_QUERY_RFC1738);
 
 $conn_error = null;
 $write_error = null;
 $manager = null;
 $users = [];
 $created = $_GET['created'] ?? '';
-$cluster = ['ok' => false, 'primary' => '-', 'setName' => 'rs0', 'hosts' => []];
+$cluster = ['ok' => false, 'primary' => '-', 'setName' => $REPLICA_SET, 'hosts' => []];
 
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
