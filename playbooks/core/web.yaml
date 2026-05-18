@@ -11,6 +11,9 @@
     mongodb_tls_local_ca_file: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}/mongoCA.crt"
     mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
     php_libresolv_path: "/lib/x86_64-linux-gnu/libresolv.so.2"
+    web_login_enforced: false
+    web_login_user: "app_writer"
+    web_login_pass: "WriterPass123!"
 
   tasks:
     - name: "1. Cài đặt Nginx và các gói Build-essential cho PHP"
