@@ -49,13 +49,22 @@ def build_pivot(reports: dict[str, dict[str, Any]]) -> tuple[list[str], list[dic
     fieldnames = ["section", "control_id", "title", "assessment", "expected"]
     for host in hosts:
         fieldnames.extend([f"{host}_status", f"{host}_actual"])
-    fieldnames.append("all_pass")
+    fieldnames.append("overall")
 
     rows = []
     for cid in sorted(control_index.keys(), key=lambda x: [int(p) if p.isdigit() else p for p in x.split(".")]):
         row = control_index[cid]
         statuses = [row.get(f"{h}_status", "") for h in hosts]
-        row["all_pass"] = "yes" if statuses and all(s == "PASS" for s in statuses) else "no"
+        if statuses and all(s == "PASS" for s in statuses):
+            row["overall"] = "PASS"
+        elif any(s == "FAIL" for s in statuses):
+            row["overall"] = "FAIL"
+        elif any(s == "ERROR" for s in statuses):
+            row["overall"] = "ERROR"
+        elif any(s == "REVIEW" for s in statuses):
+            row["overall"] = "REVIEW"
+        else:
+            row["overall"] = "UNKNOWN"
         rows.append(row)
 
     return fieldnames, rows

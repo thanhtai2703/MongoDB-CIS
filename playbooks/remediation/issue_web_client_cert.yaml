@@ -1,0 +1,163 @@
+---
+# Issue PHP web client certificate signed by MongoDB CA.
+#
+# Sau khi chạy remediate_tls.yaml strict (không có allowConnectionsWithoutCertificates),
+# mongod yêu cầu mutual TLS — PHP web không có client cert sẽ fail kết nối.
+#
+# Playbook này:
+#   1. Sinh client cert ký bằng CA đã có (trên controller)
+#   2. Copy cert lên web host
+#   3. Re-render index.php với tlsCertificateKeyFile
+#   4. Restart PHP-FPM
+
+- name: "Generate PHP web client certificate on controller"
+  hosts: localhost
+  gather_facts: no
+  become: no
+  vars:
+    mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}"
+    mongodb_tls_days: 825
+
+  tasks:
+    - name: "Verify MongoDB CA exists on controller"
+      stat:
+        path: "{{ mongodb_tls_local_dir }}/mongoCA.crt"
+      register: ca_stat
+
+    - name: "Fail if CA is missing (run remediate_tls.yaml first)"
+      fail:
+        msg: "CA not found at {{ mongodb_tls_local_dir }}/mongoCA.crt. Run remediate_tls.yaml first."
+      when: not ca_stat.stat.exists
+
+    - name: "Render OpenSSL config for web client"
+      copy:
+        dest: "{{ mongodb_tls_local_dir }}/web_client.cnf"
+        mode: "0600"
+        content: |
+          [ req ]
+          default_bits = 4096
+          prompt = no
+          default_md = sha256
+          distinguished_name = req_distinguished_name
+
+          [ req_distinguished_name ]
+          CN = web-client
+
+    - name: "Generate web client private key"
+      command:
+        argv:
+          - openssl
+          - genrsa
+          - -out
+          - "{{ mongodb_tls_local_dir }}/web_client.key"
+          - "4096"
+        creates: "{{ mongodb_tls_local_dir }}/web_client.key"
+
+    - name: "Generate web client CSR"
+      command:
+        argv:
+          - openssl
+          - req
+          - -new
+          - -key
+          - "{{ mongodb_tls_local_dir }}/web_client.key"
+          - -out
+          - "{{ mongodb_tls_local_dir }}/web_client.csr"
+          - -config
+          - "{{ mongodb_tls_local_dir }}/web_client.cnf"
+        creates: "{{ mongodb_tls_local_dir }}/web_client.csr"
+
+    - name: "Sign web client certificate with MongoDB CA"
+      command:
+        argv:
+          - openssl
+          - x509
+          - -req
+          - -in
+          - "{{ mongodb_tls_local_dir }}/web_client.csr"
+          - -CA
+          - "{{ mongodb_tls_local_dir }}/mongoCA.crt"
+          - -CAkey
+          - "{{ mongodb_tls_local_dir }}/mongoCA.key"
+          - -CAcreateserial
+          - -out
+          - "{{ mongodb_tls_local_dir }}/web_client.crt"
+          - -days
+          - "{{ mongodb_tls_days | string }}"
+          - -sha256
+        creates: "{{ mongodb_tls_local_dir }}/web_client.crt"
+
+    - name: "Build web client PEM (key + cert)"
+      shell: "cat {{ mongodb_tls_local_dir }}/web_client.key {{ mongodb_tls_local_dir }}/web_client.crt > {{ mongodb_tls_local_dir }}/web_client.pem"
+      args:
+        creates: "{{ mongodb_tls_local_dir }}/web_client.pem"
+
+
+- name: "Detect current MongoDB port from db-node-1 mongod.conf"
+  hosts: db-node-1
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: "Read net.port from /etc/mongod.conf"
+      shell: "grep -E '^[[:space:]]*port:' /etc/mongod.conf | awk '{print $2}'"
+      register: detected_port
+      changed_when: false
+
+    - name: "Broadcast detected port to web_servers"
+      add_host:
+        name: "{{ item }}"
+        mongodb_port_runtime: "{{ detected_port.stdout | trim }}"
+      loop: "{{ groups['web_servers'] }}"
+      run_once: yes
+      changed_when: false
+
+
+- name: "Deploy PHP web client certificate and refresh app config"
+  hosts: web_servers
+  become: yes
+  gather_facts: no
+  vars:
+    mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}"
+    mongodb_tls_client_pem: "/etc/ssl/mongodb/web_client.pem"
+    mongodb_tls_ca_file: "/etc/ssl/mongodb/mongoCA.crt"
+    mongodb_port: "{{ mongodb_port_runtime | default('27017') }}"
+    mongodb_db: "demo"
+    mongodb_app_user: "app_writer"
+    mongodb_app_pass: "WriterPass123!"
+    mongodb_app_tls: true
+    php_version: "8.1"
+    app_root: "/var/www/html"
+
+  tasks:
+    - name: "Show MongoDB port being used for web URI"
+      debug:
+        msg: "Web will connect to MongoDB on port {{ mongodb_port }}"
+
+    - name: "Ensure /etc/ssl/mongodb directory exists"
+      file:
+        path: /etc/ssl/mongodb
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Copy web client PEM from controller"
+      copy:
+        src: "{{ mongodb_tls_local_dir }}/web_client.pem"
+        dest: "{{ mongodb_tls_client_pem }}"
+        owner: www-data
+        group: www-data
+        mode: "0400"
+
+    - name: "Re-render index.php with client cert path"
+      template:
+        src: ../../templates/index.php.j2
+        dest: "{{ app_root }}/index.php"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+
+    - name: "Restart PHP-FPM to apply new connection settings"
+      service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted

@@ -142,16 +142,52 @@ def markdown(report: dict[str, Any]) -> str:
         )
 
     lines.append("")
-    lines.append("## Non-Pass Items")
+    lines.append("## Failed Items (cần fix qua remediation)")
     lines.append("")
 
+    fail_count = 0
     for item in report["results"]:
-        if item.get("status") != "PASS":
+        if item.get("status") == "FAIL":
+            fail_count += 1
             lines.append(
                 f"- **{item.get('control_id')} {item.get('title')}** "
-                f"({item.get('status')}, {item.get('section')}): "
+                f"({item.get('section')}): "
                 f"{json.dumps(item.get('actual'), ensure_ascii=False)}"
             )
+    if fail_count == 0:
+        lines.append("_None_")
+
+    lines.append("")
+    lines.append("## Manual Review Items (cần người xem)")
+    lines.append("")
+
+    review_count = 0
+    for item in report["results"]:
+        if item.get("status") == "REVIEW":
+            review_count += 1
+            lines.append(
+                f"- **{item.get('control_id')} {item.get('title')}** "
+                f"({item.get('section')}): "
+                f"{json.dumps(item.get('actual'), ensure_ascii=False)}"
+            )
+    if review_count == 0:
+        lines.append("_None_")
+
+    lines.append("")
+    lines.append("## Error Items (script failed)")
+    lines.append("")
+
+    error_count = 0
+    for item in report["results"]:
+        if item.get("status") == "ERROR":
+            error_count += 1
+            lines.append(
+                f"- **{item.get('control_id')} {item.get('title')}** "
+                f"({item.get('section')}): "
+                f"{json.dumps(item.get('actual'), ensure_ascii=False)}"
+            )
+    if error_count == 0:
+        lines.append("_None_")
 
     lines.append("")
     return "\n".join(lines)

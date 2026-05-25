@@ -12,6 +12,7 @@ $MONGO_USER = "{{ mongodb_app_user | default('') }}";
 $MONGO_PASS = "{{ mongodb_app_pass | default('') }}";
 $MONGO_TLS = {% if mongodb_app_tls | default(false) | bool %}true{% else %}false{% endif %};
 $MONGO_TLS_CA_FILE = "{{ mongodb_tls_ca_file | default('/etc/ssl/mongodb/mongoCA.crt') }}";
+$MONGO_TLS_CLIENT_PEM = "{{ mongodb_tls_client_pem | default('') }}";
 $REPLICA_SET = "{{ replica_set_name | default('rs0') }}";
 
 $baseUri = $MONGO_USER !== ''
@@ -32,6 +33,9 @@ if ($MONGO_USER !== '') {
 if ($MONGO_TLS) {
     $uriQuery['tls'] = 'true';
     $uriQuery['tlsCAFile'] = $MONGO_TLS_CA_FILE;
+    if ($MONGO_TLS_CLIENT_PEM !== '') {
+        $uriQuery['tlsCertificateKeyFile'] = $MONGO_TLS_CLIENT_PEM;
+    }
     $uriQuery['tlsAllowInvalidHostnames'] = 'true';
 }
 

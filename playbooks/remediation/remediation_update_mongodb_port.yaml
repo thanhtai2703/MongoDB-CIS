@@ -1,16 +1,17 @@
 ---
-# Migrate MongoDB port from default 27017 to mongodb_port_new (default 27018).
+# =========================================================================
+# CIS MongoDB 8 Remediation — Network Configuration
+# Covers: 6.1 (non-default port — change from 27017 to organization-defined)
 #
 # QUAN TRỌNG: Playbook render lại /etc/mongod.conf bằng templates/mongod.conf.j2
 # (plain, KHÔNG có auth/TLS). Phải chạy TRƯỚC remediate_auth/tls, không chạy sau.
-#
-# Sau khi chạy thành công, biến `mongodb_port` trong group_vars/all.yaml sẽ được
-# cập nhật → các playbook tiếp theo (remediate_*, audit, web) tự dùng port mới.
-
-- name: "Migrate MongoDB to non-default port"
+# Sau khi chạy, group_vars/all.yaml sẽ được cập nhật mongodb_port mới.
+# =========================================================================
+- name: "[CIS 6.1] Migrate MongoDB to non-default port"
   hosts: database_nodes
   become: yes
   gather_facts: no
+  tags: ["cis_6_1"]
   vars:
     mongodb_port_new: 27018
 

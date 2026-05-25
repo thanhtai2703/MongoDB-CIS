@@ -1,22 +1,29 @@
 ---
-- name: "Remediate CIS MongoDB 8 file permissions"
+# =========================================================================
+# CIS MongoDB 8 Remediation — File Permissions
+# Covers: 7.1 (keyfile mode 0600 owner mongodb) + 7.2 (dbPath mode 0770 owner mongodb)
+# =========================================================================
+- name: "[CIS 7.1 + 7.2] Remediate file permissions"
   hosts: database_nodes
   become: yes
   gather_facts: no
+  tags: ["cis_7_1", "cis_7_2"]
   vars:
     mongodb_keyfile_path: "/etc/mongodb-keyfile"
     mongodb_db_path: "/var/lib/mongodb"
 
   tasks:
-    - name: "Ensure MongoDB keyFile has strict permissions"
+    - name: "[CIS 7.1] Ensure MongoDB keyFile has strict permissions (chmod 600, chown mongodb)"
+      tags: ["cis_7_1"]
       file:
         path: "{{ mongodb_keyfile_path }}"
         owner: mongodb
         group: mongodb
-        mode: "0400"
+        mode: "0600"
       when: mongodb_keyfile_path | length > 0
 
-    - name: "Ensure MongoDB database directory owner is mongodb"
+    - name: "[CIS 7.2] Ensure MongoDB dbPath directory owner is mongodb (chmod 770)"
+      tags: ["cis_7_2"]
       file:
         path: "{{ mongodb_db_path }}"
         state: directory
@@ -24,14 +31,16 @@
         group: mongodb
         mode: "0770"
 
-    - name: "Ensure MongoDB database files are owned by mongodb"
+    - name: "[CIS 7.2] Ensure MongoDB dbPath files are owned by mongodb (recursive)"
+      tags: ["cis_7_2"]
       file:
         path: "{{ mongodb_db_path }}"
         owner: mongodb
         group: mongodb
         recurse: yes
 
-    - name: "Restore MongoDB database directory mode after recursive ownership"
+    - name: "[CIS 7.2] Restore dbPath directory mode after recursive ownership"
+      tags: ["cis_7_2"]
       file:
         path: "{{ mongodb_db_path }}"
         state: directory

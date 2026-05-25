@@ -197,23 +197,15 @@ def mongosh_eval(script: str, port: int) -> dict[str, Any]:
 
 
 def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
-    allowed_admin_users = {
-        user.strip()
-        for user in os.environ.get("MONGO_AUDIT_ALLOWED_ADMIN_USERS", "").split(",")
-        if user.strip()
-    }
-    risky_roles = [
-        "root",
-        "dbOwner",
-        "userAdmin",
-        "userAdminAnyDatabase",
-        "dbAdminAnyDatabase",
-        "readWriteAnyDatabase",
-    ]
+    # PDF CIS 3.1 — strict:
+    #   db.system.users.find(
+    #     {"roles.role":{$in:["dbOwner","userAdmin","userAdminAnyDatabase"]},"roles.db":"admin"}
+    #   )
+    risky_roles = ["dbOwner", "userAdmin", "userAdminAnyDatabase"]
     roles_json = json.dumps(risky_roles)
     query = (
         'JSON.stringify(db.getSiblingDB("admin").system.users.find('
-        f'{{"roles.role":{{$in:{roles_json}}}}},'
+        f'{{"roles.role":{{$in:{roles_json}}},"roles.db":"admin"}},'
         '{user:1,db:1,roles:1,_id:0}).toArray())'
     )
     risky_admin_roles = mongosh_eval(query, port)
@@ -224,20 +216,8 @@ def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
         except json.JSONDecodeError:
             risky_users = risky_admin_roles["stdout"]
         if isinstance(risky_users, list):
-            undocumented_users = [
-                user
-                for user in risky_users
-                if str(user.get("user", "")) not in allowed_admin_users
-            ]
-            status = "PASS" if undocumented_users == [] else "FAIL"
-            actual = {
-                "undocumented_broad_role_users": undocumented_users,
-                "documented_admin_users": [
-                    user
-                    for user in risky_users
-                    if str(user.get("user", "")) in allowed_admin_users
-                ],
-            }
+            status = "PASS" if risky_users == [] else "FAIL"
+            actual = {"risky_role_users": risky_users}
         else:
             status = "FAIL"
             actual = risky_users
@@ -251,12 +231,9 @@ def check_3_1_least_privilege(results: list[dict[str, Any]], port: int) -> None:
         "Ensure least privilege for database accounts",
         "Manual",
         status,
-        "No normal account has broad administrative roles unless documented",
+        "No account has dbOwner/userAdmin/userAdminAnyDatabase scoped to admin database",
         actual,
-        {
-            "query": risky_admin_roles,
-            "allowed_admin_users": sorted(allowed_admin_users),
-        },
+        {"query": risky_admin_roles},
     )
 
 
@@ -267,22 +244,10 @@ def check_3_2_rbac_enabled(
     config_path: str,
     port: int,
 ) -> None:
-    authorization = get_path(conf, "security", "authorization")
-    auth_enabled = str(authorization).lower() == "enabled"
-
-    if not auth_enabled:
-        add_result(
-            results,
-            "3.2",
-            "Ensure that role-based access control is enabled and configured appropriately",
-            "Manual",
-            "FAIL",
-            "RBAC is enabled (security.authorization=enabled) before reviewing roles",
-            {"authorization": authorization},
-            {"config": config_path, "config_error": conf_error},
-        )
-        return
-
+    # PDF CIS 3.2 — strict: enumerate users + roles via mongosh, no config dependency.
+    #   > db.getUser()
+    #   > db.getRole()
+    # PDF does NOT require checking security.authorization here (that is 2.1).
     allowed_admin_users = {
         user.strip()
         for user in os.environ.get("MONGO_AUDIT_ALLOWED_ADMIN_USERS", "").split(",")
@@ -334,7 +299,7 @@ def check_3_2_rbac_enabled(
         evidence["stdout_parse_error"] = users_query["stdout"]
         users_list = []
 
-    violations: list[dict[str, Any]] = []
+    flagged: list[dict[str, Any]] = []
     user_summaries: list[dict[str, Any]] = []
 
     for user in users_list:
@@ -351,7 +316,7 @@ def check_3_2_rbac_enabled(
         )
 
         if not user_roles:
-            violations.append({"user": username, "issue": "no roles assigned", "roles": []})
+            flagged.append({"user": username, "issue": "no roles assigned", "roles": []})
             continue
 
         if username in allowed_admin_users:
@@ -361,7 +326,7 @@ def check_3_2_rbac_enabled(
             r for r in user_roles if str(r.get("role")) in privileged_roles
         ]
         if bad_roles:
-            violations.append(
+            flagged.append(
                 {
                     "user": username,
                     "issue": "non-allowed user holds privileged role",
@@ -369,12 +334,14 @@ def check_3_2_rbac_enabled(
                 }
             )
 
-    status = "PASS" if not violations else "FAIL"
+    # PDF CIS 3.2 is Manual: reviewer must verify the appropriate role(s)
+    # have been configured for each user. Audit only enumerates users + roles.
+    status = "REVIEW"
     actual: Any = {
-        "authorization": authorization,
         "user_count": len(user_summaries),
-        "violations": violations,
+        "flagged_for_review": flagged,
         "users": user_summaries,
+        "note": "Manual review required: verify each user has only roles needed for their job function.",
     }
 
     add_result(
@@ -383,7 +350,7 @@ def check_3_2_rbac_enabled(
         "Ensure that role-based access control is enabled and configured appropriately",
         "Manual",
         status,
-        "All users have at least one role and only allowed admins hold privileged roles",
+        "Reviewer verifies each user has only the role(s) required for their job function",
         actual,
         evidence,
     )
@@ -475,23 +442,19 @@ def summarize_custom_role(role: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -> None:
+    # PDF CIS 3.4 — strict:
+    #   db.runCommand({rolesInfo:1, showPrivileges:true, showBuiltinRoles:true})
     custom_roles_result = mongosh_eval(
         """
         const customRoles = [];
-        const dbList = db.adminCommand({ listDatabases: 1 });
-        if (dbList.ok === 1 && Array.isArray(dbList.databases)) {
-          dbList.databases.forEach(function(dbInfo) {
-            const targetDb = db.getSiblingDB(dbInfo.name);
-            const rolesResult = targetDb.runCommand({
-              rolesInfo: 1,
-              showPrivileges: true,
-              showBuiltinRoles: false
-            });
-            if (rolesResult.ok === 1 && Array.isArray(rolesResult.roles)) {
-              rolesResult.roles.forEach(function(role) {
-                customRoles.push(role);
-              });
-            }
+        const rolesResult = db.getSiblingDB("admin").runCommand({
+          rolesInfo: 1,
+          showPrivileges: true,
+          showBuiltinRoles: true
+        });
+        if (rolesResult.ok === 1 && Array.isArray(rolesResult.roles)) {
+          rolesResult.roles.forEach(function(role) {
+            customRoles.push(role);
           });
         }
         JSON.stringify(customRoles);
@@ -506,6 +469,7 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
         "rc": custom_roles_result["rc"],
         "stdout": custom_roles_result["stdout"],
         "stderr": custom_roles_result["stderr"],
+        "note": "PDF CIS 3.4 is Manual: enumerate all roles (built-in + custom) and review whether each role is needed and whether its privileges are minimal.",
     }
 
     if custom_roles_result["rc"] == 0:
@@ -520,7 +484,7 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
             for role in custom_roles
             if isinstance(role, dict)
         ]
-        dangerous_roles = [
+        flagged_roles = [
             role
             for role in role_summaries
             if role["has_anyResource"] or role.get("dangerous_inherited_roles")
@@ -528,29 +492,20 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
 
         evidence.update(
             {
-                "custom_role_count": len(role_summaries),
-                "custom_roles": role_summaries,
-                "dangerous_roles": dangerous_roles,
+                "role_count": len(role_summaries),
+                "all_roles": role_summaries,
+                "flagged_for_review": flagged_roles,
             }
         )
 
-        if dangerous_roles:
-            status = "FAIL"
-            actual = {
-                "dangerous_role_count": len(dangerous_roles),
-                "dangerous_roles": dangerous_roles,
-            }
-        else:
-            status = "PASS"
-            actual = (
-                "No custom roles found"
-                if not role_summaries
-                else {
-                    "custom_role_count": len(role_summaries),
-                    "custom_roles": role_summaries,
-                    "note": "All custom roles are scoped (no anyResource, no inherited root/dbOwner).",
-                }
-            )
+        # PDF CIS 3.4 is Manual: human must review whether each role is needed
+        # and grants only necessary privileges. Audit only collects evidence.
+        status = "REVIEW"
+        actual = {
+            "role_count": len(role_summaries),
+            "flagged_count": len(flagged_roles),
+            "flagged_for_review": flagged_roles,
+        }
 
     add_result(
         results,
@@ -558,7 +513,7 @@ def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -
         "Ensure that each role for each MongoDB database is needed and grants only the necessary privileges",
         "Manual",
         status,
-        "No dangerous custom role uses anyResource or inherits root/dbOwner",
+        "Reviewer verifies each role (built-in + custom) is needed and grants only necessary privileges",
         actual,
         evidence,
     )

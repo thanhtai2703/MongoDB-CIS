@@ -1,8 +1,15 @@
 ---
-- name: "Prepare MongoDB authentication remediation"
+# =========================================================================
+# CIS MongoDB 8 Remediation — Authentication
+# Covers: 2.1 (authorization), 2.2 (localhost bypass), 7.1 (keyfile perms)
+# Prerequisite for replica set: keyfile inter-node auth (PDF 2.3 dev mode)
+# =========================================================================
+
+- name: "[Prereq] Install shared replica set keyfile (replica set inter-node auth)"
   hosts: database_nodes
   become: yes
   gather_facts: no
+  tags: ["cis_2_1_prereq", "cis_7_1"]
   vars:
     mongodb_keyfile_path: "/etc/mongodb-keyfile"
     mongodb_keyfile_local_path: "/tmp/automation_cis_mongodb_keyfile"
@@ -15,23 +22,25 @@
       become: no
       run_once: yes
 
-    - name: "Install shared replica set keyfile"
+    - name: "Install shared replica set keyfile (CIS 7.1: mode 0600 owner mongodb)"
       copy:
         content: "{{ hostvars[groups['database_nodes'][0]].mongodb_keyfile_content }}"
         dest: "{{ mongodb_keyfile_path }}"
         owner: mongodb
         group: mongodb
-        mode: "0400"
+        mode: "0600"
 
-- name: "Create MongoDB admin and audit users before enabling authorization"
+# =========================================================================
+# CIS 2.1 — Step 2: Create the system user administrator
+# =========================================================================
+- name: "[CIS 2.1] Create MongoDB system user administrator"
   hosts: db-node-1
   become: yes
   gather_facts: no
+  tags: ["cis_2_1"]
   vars:
     mongo_admin_user: "MongoAdmin"
     mongo_admin_pass: "AdminPass123!"
-    mongo_audit_user: "MongoAudit"
-    mongo_audit_pass: "AuditPass123!"
     mongo_auth_db: "admin"
     mongo_seed_uri: "mongodb://{{ hostvars['db-node-1'].ansible_host }}:{{ mongodb_port }}/?directConnection=true&w=majority"
 
@@ -48,52 +57,44 @@
       delay: 5
       changed_when: false
 
-    - name: "Create or update admin and audit users"
+    # PDF CIS 2.1 Remediation step 2: Create the system user administrator
+    - name: "Create or update system user administrator"
       shell: |
         mongosh --quiet "{{ mongo_seed_uri }}" <<'MONGO'
         const adb = db.getSiblingDB("{{ mongo_auth_db }}");
 
-        function upsertUser(username, password, roles) {
-          if (adb.getUser(username)) {
-            adb.updateUser(username, { pwd: password, roles: roles });
-            print("updated user: " + username);
-          } else {
-            adb.createUser({ user: username, pwd: password, roles: roles });
-            print("created user: " + username);
-          }
+        if (adb.getUser("{{ mongo_admin_user }}")) {
+          adb.updateUser("{{ mongo_admin_user }}", {
+            pwd: "{{ mongo_admin_pass }}",
+            roles: [{ role: "root", db: "admin" }]
+          });
+          print("updated user: {{ mongo_admin_user }}");
+        } else {
+          adb.createUser({
+            user: "{{ mongo_admin_user }}",
+            pwd: "{{ mongo_admin_pass }}",
+            roles: [{ role: "root", db: "admin" }]
+          });
+          print("created user: {{ mongo_admin_user }}");
         }
-
-        upsertUser(
-          "{{ mongo_admin_user }}",
-          "{{ mongo_admin_pass }}",
-          [
-            { role: "root", db: "admin" }
-          ]
-        );
-
-        upsertUser(
-          "{{ mongo_audit_user }}",
-          "{{ mongo_audit_pass }}",
-          [
-            { role: "clusterMonitor", db: "admin" },
-            { role: "userAdminAnyDatabase", db: "admin" },
-            { role: "readAnyDatabase", db: "admin" }
-          ]
-        );
         MONGO
       register: user_create
       changed_when: "'created user:' in user_create.stdout or 'updated user:' in user_create.stdout"
       no_log: true
 
-- name: "Enable MongoDB authentication and localhost bypass protection"
+# =========================================================================
+# CIS 2.1 — Step 3+4: Set authorization: enabled + restart
+# CIS 2.2       : Set setParameter.enableLocalhostAuthBypass: false
+# =========================================================================
+- name: "[CIS 2.1 + 2.2] Enable authorization and localhost bypass protection"
   hosts: database_nodes
   become: yes
   gather_facts: no
+  tags: ["cis_2_1", "cis_2_2"]
   vars:
     mongodb_keyfile_path: "/etc/mongodb-keyfile"
-
   tasks:
-    - name: "Render MongoDB auth-enabled config"
+    - name: "[CIS 2.1 + 2.2] Render mongod_auth.conf.j2 (sets authorization=enabled, enableLocalhostAuthBypass=false)"
       template:
         src: ../../templates/mongod_auth.conf.j2
         dest: /etc/mongod.conf

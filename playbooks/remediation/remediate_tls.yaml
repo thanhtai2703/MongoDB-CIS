@@ -1,8 +1,17 @@
 ---
-- name: "Enable MongoDB TLS transport encryption"
+# =========================================================================
+# CIS MongoDB 8 Remediation — Data Encryption (TLS)
+# Covers:
+#   4.1 (legacy TLS protocols disabled) — disabledProtocols: TLS1_0,TLS1_1
+#   4.2 (weak protocols disabled)       — same line
+#   4.3 (transport encryption)          — mode: requireTLS + cert + CA
+#   7.1 (cert file perms — node PEM)    — chmod 0600 owner mongodb
+# =========================================================================
+- name: "[CIS 4.1 + 4.2 + 4.3 + 7.1] Enable MongoDB TLS transport encryption"
   hosts: database_nodes
   become: yes
   gather_facts: no
+  tags: ["cis_4_1", "cis_4_2", "cis_4_3", "cis_7_1"]
   vars:
     mongodb_tls_dir: "/etc/ssl/mongodb"
     mongodb_tls_local_dir: "/tmp/automation_cis_mongodb_tls_{{ lookup('env', 'USER') | default('ansible', true) }}"
@@ -174,7 +183,8 @@
         group: mongodb
         mode: "0755"
 
-    - name: "Install MongoDB CA certificate"
+    - name: "[CIS 7.1] Install MongoDB CA certificate (public, mode 0644)"
+      tags: ["cis_7_1"]
       copy:
         src: "{{ mongodb_tls_local_dir }}/mongoCA.crt"
         dest: "{{ mongodb_tls_dir }}/mongoCA.crt"
@@ -182,7 +192,8 @@
         group: root
         mode: "0644"
 
-    - name: "Install MongoDB node certificate and key PEM"
+    - name: "[CIS 7.1] Install MongoDB node certificate and key PEM (private, mode 0600)"
+      tags: ["cis_7_1"]
       copy:
         src: "{{ mongodb_tls_local_dir }}/{{ inventory_hostname }}.pem"
         dest: "{{ mongodb_tls_dir }}/{{ inventory_hostname }}.pem"
@@ -190,7 +201,8 @@
         group: mongodb
         mode: "0600"
 
-    - name: "Render MongoDB TLS-enabled config"
+    - name: "[CIS 4.1 + 4.2 + 4.3] Render mongod_tls.conf.j2 (mode=requireTLS, disabledProtocols=TLS1_0,TLS1_1)"
+      tags: ["cis_4_1", "cis_4_2", "cis_4_3"]
       template:
         src: ../../templates/mongod_tls.conf.j2
         dest: /etc/mongod.conf
