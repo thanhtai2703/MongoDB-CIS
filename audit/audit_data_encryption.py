@@ -185,36 +185,19 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
         },
     )
 
+    # PDF CIS 4.3 — strict:
+    #   cat /etc/mongod.conf | grep -A20 'net' | grep -A10 'tls' | grep 'mode'
+    #   → verify net.tls.mode == requireTLS
     tls_mode = get_path(conf, "net", "tls", "mode")
-    ssl_mode = get_path(conf, "net", "ssl", "mode")
-
-    certificate_key_file = get_path(conf, "net", "tls", "certificateKeyFile")
-    pem_key_file = get_path(conf, "net", "ssl", "PEMKeyFile")
-    ca_file_tls = get_path(conf, "net", "tls", "CAFile")
-    ca_file_ssl = get_path(conf, "net", "ssl", "CAFile")
-
-    cert_file = certificate_key_file or pem_key_file
-    ca_file = ca_file_tls or ca_file_ssl
-
-    transport_ok = (
-        str(tls_mode).lower() == "requiretls"
-        or str(ssl_mode).lower() == "requiressl"
-    ) and bool(cert_file) and bool(ca_file)
 
     add_result(
         results,
         "4.3",
         "Ensure Encryption of Data in Transit TLS or SSL",
         "Automated",
-        "PASS" if transport_ok else "FAIL",
-        "TLS/SSL mode is requireTLS/requireSSL and certificate + CA file are configured",
-        {
-            "tls_mode": tls_mode,
-            "ssl_mode": ssl_mode,
-            "certificateKeyFile": certificate_key_file,
-            "PEMKeyFile": pem_key_file,
-            "CAFile": ca_file,
-        },
+        "PASS" if str(tls_mode).lower() == "requiretls" else "FAIL",
+        "net.tls.mode is requireTLS",
+        {"tls_mode": tls_mode},
         {"config": config_path, "config_error": conf_error},
     )
 

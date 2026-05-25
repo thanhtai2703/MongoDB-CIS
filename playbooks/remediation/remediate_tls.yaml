@@ -201,7 +201,7 @@
         group: mongodb
         mode: "0600"
 
-    - name: "[CIS 4.1 + 4.2 + 4.3] Render mongod_tls.conf.j2 (mode=requireTLS, disabledProtocols=TLS1_0,TLS1_1)"
+    - name: " Render mongod_tls.conf.j2 (mode=requireTLS, disabledProtocols=TLS1_0,TLS1_1)"
       tags: ["cis_4_1", "cis_4_2", "cis_4_3"]
       template:
         src: ../../templates/mongod_tls.conf.j2

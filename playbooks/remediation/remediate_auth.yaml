@@ -1,15 +1,24 @@
 ---
 # =========================================================================
 # CIS MongoDB 8 Remediation — Authentication
-# Covers: 2.1 (authorization), 2.2 (localhost bypass), 7.1 (keyfile perms)
-# Prerequisite for replica set: keyfile inter-node auth (PDF 2.3 dev mode)
+# Covers strictly per PDF Level 1:
+#   2.1 (authorization: enabled) — 4 steps from PDF Remediation
+#   2.2 (enableLocalhostAuthBypass: false)
+#   7.1 (keyfile file permissions)
+#
+# Note: Play 1 below (install keyfile) is NOT a CIS 2.1 step.
+# PDF 2.1 prescribes only 4 steps (start / create admin / set authorization / restart).
+# Keyfile install is a MongoDB technical requirement for replica set deployment:
+# "security.keyFile is required when authorization is enabled with replication".
+# Operational necessity beyond CIS L1 scope. CIS audit only checks keyfile
+# permissions (control 7.1), not the keyfile creation step itself.
 # =========================================================================
 
-- name: "[Prereq] Install shared replica set keyfile (replica set inter-node auth)"
+- name: "[Deployment prerequisite — a CIS 2.1 step] Install replica set keyfile"
   hosts: database_nodes
   become: yes
   gather_facts: no
-  tags: ["cis_2_1_prereq", "cis_7_1"]
+  tags: ["replica_set_prereq", "cis_7_1"]
   vars:
     mongodb_keyfile_path: "/etc/mongodb-keyfile"
     mongodb_keyfile_local_path: "/tmp/automation_cis_mongodb_keyfile"
@@ -22,7 +31,7 @@
       become: no
       run_once: yes
 
-    - name: "Install shared replica set keyfile (CIS 7.1: mode 0600 owner mongodb)"
+    - name: "Install shared replica set keyfile "
       copy:
         content: "{{ hostvars[groups['database_nodes'][0]].mongodb_keyfile_content }}"
         dest: "{{ mongodb_keyfile_path }}"
@@ -94,7 +103,7 @@
   vars:
     mongodb_keyfile_path: "/etc/mongodb-keyfile"
   tasks:
-    - name: "[CIS 2.1 + 2.2] Render mongod_auth.conf.j2 (sets authorization=enabled, enableLocalhostAuthBypass=false)"
+    - name: "Render mongod_auth.conf.j2 (sets authorization=enabled, enableLocalhostAuthBypass=false)"
       template:
         src: ../../templates/mongod_auth.conf.j2
         dest: /etc/mongod.conf
