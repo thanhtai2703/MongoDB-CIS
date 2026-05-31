@@ -244,10 +244,6 @@ def check_3_2_rbac_enabled(
     config_path: str,
     port: int,
 ) -> None:
-    # PDF CIS 3.2 — strict: enumerate users + roles via mongosh, no config dependency.
-    #   > db.getUser()
-    #   > db.getRole()
-    # PDF does NOT require checking security.authorization here (that is 2.1).
     allowed_admin_users = {
         user.strip()
         for user in os.environ.get("MONGO_AUDIT_ALLOWED_ADMIN_USERS", "").split(",")
@@ -443,7 +439,6 @@ def summarize_custom_role(role: dict[str, Any]) -> dict[str, Any]:
 
 def check_3_4_role_privileges_review(results: list[dict[str, Any]], port: int) -> None:
     # PDF CIS 3.4 — strict:
-    #   db.runCommand({rolesInfo:1, showPrivileges:true, showBuiltinRoles:true})
     custom_roles_result = mongosh_eval(
         """
         const customRoles = [];

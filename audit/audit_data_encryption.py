@@ -186,8 +186,6 @@ def audit(conf: dict[str, Any], conf_error: str | None, config_path: str) -> dic
     )
 
     # PDF CIS 4.3 — strict:
-    #   cat /etc/mongod.conf | grep -A20 'net' | grep -A10 'tls' | grep 'mode'
-    #   → verify net.tls.mode == requireTLS
     tls_mode = get_path(conf, "net", "tls", "mode")
 
     add_result(
